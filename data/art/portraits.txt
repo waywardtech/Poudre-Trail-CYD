@@ -1,0 +1,4 @@
+janis.bmp
+friday.bmp
+virginia.bmp
+mason.bmp
