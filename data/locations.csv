@@ -1,0 +1,6 @@
+location_id,name,background_bmp,travel_text_file
+laporte,La Porte,/data/art/locations/laporte.bmp,/data/dialogue/locations/laporte.txt
+council_tree,Council Tree,/data/art/locations/council_tree.bmp,/data/dialogue/locations/council_tree.txt
+virginia_dale,Virginia Dale,/data/art/locations/virginia_dale.bmp,/data/dialogue/locations/virginia_dale.txt
+mason_claim,Mason's Claim,/data/art/locations/mason_claim.bmp,/data/dialogue/locations/mason_claim.txt
+fort_collins,Fort Collins,/data/art/locations/fort_collins.bmp,/data/dialogue/locations/fort_collins.txt
