@@ -52,7 +52,7 @@ bool loadEventsCsv(const char* path, CsvEventRow* rows, int maxRows, int& outCou
 
         String cols[64];
         int n = splitCsv(line, cols, 64);
-        if (n < 42) continue;
+        if (n < 30) continue;
 
         CsvEventRow& r = rows[outCount++];
         r.eventId = cols[0];
@@ -64,11 +64,17 @@ bool loadEventsCsv(const char* path, CsvEventRow* rows, int maxRows, int& outCou
         r.backgroundBmp = cols[6];
         r.tone = parseTone(cols[7]);
 
-        r.choiceCount = 2;
-        r.choices[0].label = cols[16];
-        r.choices[0].foodDelta = cols[17].toInt();
-        r.choices[1].label = cols[29];
-        r.choices[1].foodDelta = cols[30].toInt();
+        r.choiceCount = 0;
+        if (cols[16].length() > 0) {
+            r.choices[r.choiceCount].label = cols[16];
+            r.choices[r.choiceCount].foodDelta = cols[17].toInt();
+            r.choiceCount++;
+        }
+        if (n > 29 && cols[29].length() > 0) {
+            r.choices[r.choiceCount].label = cols[29];
+            if (n > 30) r.choices[r.choiceCount].foodDelta = cols[30].toInt();
+            r.choiceCount++;
+        }
     }
 
     f.close();
