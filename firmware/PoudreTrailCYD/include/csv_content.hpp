@@ -1,7 +1,6 @@
 #pragma once
 #include <Arduino.h>
-
-enum class EmotionTone { STEADY, WARY, OPEN, PRESSURED, CONTRADICTED };
+#include "poudre_trail_engine.hpp"
 
 struct CsvChoice {
     String label;

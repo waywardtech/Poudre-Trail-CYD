@@ -2,7 +2,7 @@
 #include <Arduino.h>
 
 struct PagedText {
-    String pages[12];
+    String pages[24];
     int pageCount = 0;
     int pageIndex = 0;
 };

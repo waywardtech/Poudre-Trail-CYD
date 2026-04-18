@@ -5,6 +5,7 @@
 #include <XPT2046_Touchscreen.h>
 #include "poudre_trail_engine.hpp"
 #include "ui_helpers.hpp"
+#include "csv_content.hpp"
 
 #ifndef TFT_BL
 #define TFT_BL 21
@@ -15,6 +16,18 @@
 #ifndef TOUCH_IRQ
 #define TOUCH_IRQ 36
 #endif
+#ifndef TOUCH_MIN_X
+#define TOUCH_MIN_X 200
+#endif
+#ifndef TOUCH_MAX_X
+#define TOUCH_MAX_X 3800
+#endif
+#ifndef TOUCH_MIN_Y
+#define TOUCH_MIN_Y 240
+#endif
+#ifndef TOUCH_MAX_Y
+#define TOUCH_MAX_Y 3800
+#endif
 
 TFT_eSPI tft = TFT_eSPI();
 SPIClass touchSPI(VSPI);
@@ -23,11 +36,18 @@ GameEngine engine;
 RenderCache gCache;
 Snapshot gSnap;
 
+static const int MAX_EVENT_ROWS = 32;
+static const int MAX_LOCATION_ROWS = 16;
+CsvEventRow gEventRows[MAX_EVENT_ROWS];
+CsvLocationRow gLocationRows[MAX_LOCATION_ROWS];
+int gEventRowCount = 0;
+int gLocationRowCount = 0;
+
 struct Button { int x=0,y=0,w=0,h=0; String label; bool visible=false; };
 Button btnNewGame, btnLoadSave, btnContinue, btnTrade, btnSave, btnPrev, btnNext, btnBack, btnRestart, btnChoices[3];
 unsigned long lastTouchMs = 0;
 
-static uint16_t bg=TFT_BLACK, panel=0x18E3, textCol=TFT_WHITE, accent=TFT_CYAN, danger=TFT_RED, chip=0x4A49;
+static uint16_t bg=TFT_BLACK, panel=0x18E3, textCol=TFT_WHITE, accent=TFT_CYAN, danger=TFT_RED;
 
 static void clearButtons(){ btnNewGame.visible=btnLoadSave.visible=btnContinue.visible=btnTrade.visible=btnSave.visible=btnPrev.visible=btnNext.visible=btnBack.visible=btnRestart.visible=false; for(auto &b:btnChoices) b.visible=false; }
 static void fillButton(Button& b,int x,int y,int w,int h,const String& label){ b.x=x;b.y=y;b.w=w;b.h=h;b.label=label;b.visible=true; }
@@ -44,9 +64,9 @@ static void renderTrade(const Snapshot& s){ clearButtons(); tft.fillScreen(bg); 
 static void renderVictory(const Snapshot& s){ clearButtons(); tft.fillScreen(bg); drawStatusBar(s); tft.setTextColor(accent,bg); tft.setTextDatum(MC_DATUM); tft.drawString("Journey Complete",160,36,4); tft.setTextDatum(TL_DATUM); tft.setTextColor(textCol,bg); drawWrapped(s.footer,18,94,284,18); fillButton(btnRestart,170,184,88,32,"Restart"); drawButton(btnRestart,0x2A69,accent); }
 static void renderGameOver(const Snapshot& s){ clearButtons(); tft.fillScreen(bg); drawStatusBar(s); tft.setTextColor(danger,bg); tft.setTextDatum(MC_DATUM); tft.drawString("Game Over",160,36,4); tft.setTextDatum(TL_DATUM); tft.setTextColor(textCol,bg); drawWrapped(s.footer,18,94,284,18); fillButton(btnRestart,170,184,88,32,"Restart"); drawButton(btnRestart,0x2A69,accent); }
 static void renderScreen(const Snapshot& s){ switch(s.mode){ case GameMode::TITLE: renderTitle(s); break; case GameMode::TRAVEL: renderTravel(s); break; case GameMode::EVENT: renderEvent(s); break; case GameMode::TRADE: renderTrade(s); break; case GameMode::VICTORY: renderVictory(s); break; case GameMode::GAME_OVER: renderGameOver(s); break; } }
-static bool readTouch(int& sx,int& sy){ if(!ts.touched()) return false; TS_Point p=ts.getPoint(); int tx=map(p.x,200,3800,0,320); int ty=map(p.y,240,3800,0,240); sx=constrain(tx,0,319); sy=constrain(ty,0,239); return true; }
+static bool readTouch(int& sx,int& sy){ if(!ts.touched()) return false; TS_Point p=ts.getPoint(); int tx=map(p.x,TOUCH_MIN_X,TOUCH_MAX_X,0,320); int ty=map(p.y,TOUCH_MIN_Y,TOUCH_MAX_Y,0,240); sx=constrain(tx,0,319); sy=constrain(ty,0,239); return true; }
 static void refresh(){ gSnap=engine.snapshot(); renderScreen(gSnap); }
-static void handleTouch(int x,int y){ unsigned long now=millis(); if(now-lastTouchMs<220) return; lastTouchMs=now; if(hit(btnNewGame,x,y)){ engine.startGame(); gCache.eventKey=""; refresh(); return; } if(hit(btnContinue,x,y)){ engine.continueTravel(); gCache.eventKey=""; refresh(); return; } if(hit(btnTrade,x,y)){ engine.openTrade(); refresh(); return; } if(hit(btnBack,x,y)){ engine.backFromTrade(); refresh(); return; } if(hit(btnRestart,x,y)){ engine.restartToTitle(); gCache.eventKey=""; refresh(); return; } if(hit(btnPrev,x,y) && gCache.paged.pageIndex>0){ gCache.paged.pageIndex--; renderEvent(gSnap); return; } if(hit(btnNext,x,y) && gCache.paged.pageIndex<gCache.paged.pageCount-1){ gCache.paged.pageIndex++; renderEvent(gSnap); return; } if(gSnap.mode==GameMode::EVENT){ for(int i=0;i<3;++i){ if(hit(btnChoices[i],x,y)){ engine.chooseEventOption(i); gCache.eventKey=""; refresh(); return; } } } else if(gSnap.mode==GameMode::TRADE){ for(int i=0;i<3;++i){ if(hit(btnChoices[i],x,y)){ engine.applyTrade(i); refresh(); return; } } } }
+static void handleTouch(int x,int y){ unsigned long now=millis(); if(now-lastTouchMs<220) return; lastTouchMs=now; if(hit(btnNewGame,x,y)){ engine.startGame(); gCache.eventKey=""; refresh(); return; } if(hit(btnLoadSave,x,y)){ File f=SD.open("/save.txt"); if(f){ String text; while(f.available()) text+=(char)f.read(); f.close(); if(engine.loadSaveText(text)){ gCache.eventKey=""; refresh(); return; } } engine.startGame(); gCache.eventKey=""; refresh(); return; } if(hit(btnSave,x,y)){ String text=engine.serializeSave(); File f=SD.open("/save.txt", FILE_WRITE); if(f){ f.print(text); f.close(); } return; } if(hit(btnContinue,x,y)){ engine.continueTravel(); gCache.eventKey=""; refresh(); return; } if(hit(btnTrade,x,y)){ engine.openTrade(); refresh(); return; } if(hit(btnBack,x,y)){ engine.backFromTrade(); refresh(); return; } if(hit(btnRestart,x,y)){ engine.restartToTitle(); gCache.eventKey=""; refresh(); return; } if(hit(btnPrev,x,y) && gCache.paged.pageIndex>0){ gCache.paged.pageIndex--; renderEvent(gSnap); return; } if(hit(btnNext,x,y) && gCache.paged.pageIndex<gCache.paged.pageCount-1){ gCache.paged.pageIndex++; renderEvent(gSnap); return; } if(gSnap.mode==GameMode::EVENT){ for(int i=0;i<3;++i){ if(hit(btnChoices[i],x,y)){ engine.chooseEventOption(i); gCache.eventKey=""; refresh(); return; } } } else if(gSnap.mode==GameMode::TRADE){ for(int i=0;i<3;++i){ if(hit(btnChoices[i],x,y)){ engine.applyTrade(i); refresh(); return; } } } }
 
-void setup(){ pinMode(TFT_BL,OUTPUT); digitalWrite(TFT_BL,HIGH); Serial.begin(115200); tft.init(); tft.setRotation(1); tft.fillScreen(bg); tft.setTextFont(1); tft.setTextSize(1); tft.setTextColor(textCol,bg); touchSPI.begin(); ts.begin(touchSPI); ts.setRotation(1); SPI.begin(); SD.begin(5); refresh(); }
+void setup(){ pinMode(TFT_BL,OUTPUT); digitalWrite(TFT_BL,HIGH); Serial.begin(115200); tft.init(); tft.setRotation(1); tft.fillScreen(bg); tft.setTextFont(1); tft.setTextSize(1); tft.setTextColor(textCol,bg); touchSPI.begin(); ts.begin(touchSPI); ts.setRotation(1); SPI.begin(); SD.begin(5); loadEventsCsv("/events.csv", gEventRows, MAX_EVENT_ROWS, gEventRowCount); loadLocationsCsv("/locations.csv", gLocationRows, MAX_LOCATION_ROWS, gLocationRowCount); refresh(); }
 void loop(){ int x,y; if(readTouch(x,y)) handleTouch(x,y); delay(20); }
