@@ -89,9 +89,50 @@ void GameEngine::chooseEventOption(int index) {
     if (mode_ == GameMode::EVENT) mode_ = GameMode::TRAVEL;
 }
 
-void GameEngine::openTrade() { if (mode_ == GameMode::TRAVEL) mode_ = GameMode::TRADE; }
-void GameEngine::applyTrade(int index) { mode_ = GameMode::TRAVEL; }
-void GameEngine::backFromTrade() { mode_ = GameMode::TRAVEL; }
+void GameEngine::openTrade() {
+    if (mode_ == GameMode::TRAVEL) {
+        mode_ = GameMode::TRADE;
+        footer_ = "Trade with locals.";
+    }
+}
+
+void GameEngine::applyTrade(int index) {
+    if (mode_ != GameMode::TRADE) return;
+
+    switch (index) {
+        case 0:
+            if (r_.tradeGoods >= 2) {
+                r_.food += 10;
+                r_.tradeGoods -= 2;
+                footer_ = "You trade goods for provisions.";
+            } else {
+                footer_ = "Not enough trade goods.";
+            }
+            break;
+        case 1:
+            if (r_.tradeGoods >= 1) {
+                r_.ammunition += 5;
+                r_.tradeGoods -= 1;
+                footer_ = "You trade goods for ammunition.";
+            } else {
+                footer_ = "Not enough trade goods.";
+            }
+            break;
+        default:
+            footer_ = "No trade chosen.";
+            break;
+    }
+
+    mode_ = GameMode::TRAVEL;
+    clampResources();
+}
+
+void GameEngine::backFromTrade() {
+    if (mode_ == GameMode::TRADE) {
+        mode_ = GameMode::TRAVEL;
+        footer_ = "You step away from the market.";
+    }
+}
 
 Snapshot GameEngine::snapshot() const {
     Snapshot s;
@@ -148,6 +189,13 @@ Snapshot GameEngine::snapshot() const {
     s.reputationSummaryJanis = repLabel(r_.repJanis, "Janis");
     s.reputationSummaryFriday = repLabel(r_.repFriday, "Friday");
     s.reputationSummaryMason = repLabel(r_.repMason, "Mason");
+
+    if (mode_ == GameMode::TRADE) {
+        s.tradeChoices[0] = "Buy food";
+        s.tradeChoices[1] = "Buy ammo";
+        s.tradeChoiceCount = 2;
+    }
+
     return s;
 }
 

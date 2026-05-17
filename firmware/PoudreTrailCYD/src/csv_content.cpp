@@ -50,8 +50,8 @@ bool loadEventsCsv(const char* path, CsvEventRow* rows, int maxRows, int& outCou
         String line = readLine(f);
         if (line.length() == 0) continue;
 
-        String cols[64];
-        int n = splitCsv(line, cols, 64);
+        String cols[31];
+        int n = splitCsv(line, cols, 31);
         if (n < 30) continue;
 
         CsvEventRow& r = rows[outCount++];
