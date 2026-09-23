@@ -22,10 +22,6 @@ static constexpr int PIN_TOUCH_CS  = 33;
 static constexpr int PIN_TOUCH_IRQ = 36;
 static constexpr int PIN_SD_CS     = 5;
 
-// SD card shares the same physical SPI bus as TFT/Touch (SCK=14, MISO=12, MOSI=13).
-// SD.begin() defaults to the wrong VSPI pins (18/19/23), so we pass a custom
-// HSPI instance mapped to the CYD bus.
-static SPIClass sd_spi(HSPI);
 
 // Touch calibration (raw ADC values for the CYD panel)
 static constexpr int TOUCH_MIN_X = 240;
@@ -371,8 +367,11 @@ void setup() {
     touch.begin();
     // Touch rotation and axis swap handled in mapTouchX/Y calibration constants
 
-    sd_spi.begin(14, 12, 13, PIN_SD_CS); // SCK, MISO, MOSI, SS
-    if (!SD.begin(PIN_SD_CS, sd_spi)) {
+    // Reconfigure global SPI with CYD bus pins before SD init.
+    // TFT_eSPI uses its own internal SPIClass(VSPI); the global SPI
+    // singleton still has default pins (18/19/23) unless we set it here.
+    SPI.begin(14, 12, 13, PIN_SD_CS); // SCK, MISO, MOSI, SS
+    if (!SD.begin(PIN_SD_CS)) {
         bootMessage = "SD init failed - fallback world";
     } else {
         loadGameContent();
