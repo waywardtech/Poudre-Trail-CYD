@@ -137,19 +137,41 @@ $confirm = Read-Host "Type YES to continue"
 if ($confirm -ne 'YES') { Write-Info "Aborted."; exit 0 }
 
 # --- 4. Wipe and format FAT32 ------------------------------------------------
+# Use diskpart instead of Format-Volume: Windows' Format-Volume refuses FAT32
+# on volumes larger than 32 GB; diskpart has no such limit.
 
-Write-Info "Clearing disk $sdDiskNumber..."
-Clear-Disk -Number $sdDiskNumber -RemoveData -RemoveOEM -Confirm:$false
+Write-Info "Wiping and formatting Disk $sdDiskNumber via diskpart (FAT32, no size limit)..."
 
-Write-Info "Initialising MBR partition table..."
-Initialize-Disk -Number $sdDiskNumber -PartitionStyle MBR -Confirm:$false
+$diskpartScript = @"
+select disk $sdDiskNumber
+clean
+create partition primary
+select partition 1
+format fs=fat32 label=POUDRE quick
+assign
+exit
+"@
 
-Write-Info "Creating single FAT32 partition..."
-$newPart = New-Partition -DiskNumber $sdDiskNumber -UseMaximumSize -MbrType FAT32 -AssignDriveLetter
-$sdDrive = "$($newPart.DriveLetter):"
+$diskpartScript | diskpart | ForEach-Object { Write-Host "  $_" }
+if ($LASTEXITCODE -ne 0) { Write-Err "diskpart failed (exit code $LASTEXITCODE)." }
 
-Write-Info "Formatting $sdDrive as FAT32 (label: POUDRE)..."
-Format-Volume -DriveLetter $newPart.DriveLetter -FileSystem FAT32 -NewFileSystemLabel 'POUDRE' -Confirm:$false | Out-Null
+Write-Info "Waiting for Windows to assign a drive letter..."
+Start-Sleep -Seconds 3
+
+$sdDrive = $null
+try {
+    $fmtPart = Get-Partition -DiskNumber $sdDiskNumber -ErrorAction SilentlyContinue |
+               Where-Object { $_.DriveLetter -and $_.DriveLetter -ne [char]0 } |
+               Select-Object -First 1
+    if ($fmtPart) { $sdDrive = "$($fmtPart.DriveLetter):" }
+} catch {}
+
+if (-not $sdDrive) {
+    Write-Warn "Could not detect drive letter automatically."
+    Get-Volume | Format-Table DriveLetter, FileSystemLabel, FileSystem, Size
+    $letter = Read-Host "Enter the drive letter assigned to the SD card (e.g. E)"
+    $sdDrive = "${letter}:"
+}
 
 Write-Info "SD card formatted. Drive letter: $sdDrive"
 
