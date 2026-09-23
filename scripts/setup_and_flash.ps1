@@ -141,13 +141,13 @@ if ($confirm -ne 'YES') { Write-Info "Aborted."; exit 0 }
 # game content is only a few MB so 4 GB is more than enough.
 
 Write-Info "Wiping Disk $sdDiskNumber and creating two partitions via diskpart..."
-Write-Info "  Partition 1: 4 GB FAT32 (POUDRE) - game SD card"
+Write-Info "  Partition 1: 16 GB FAT32 (POUDRE) - game SD card / CYD projects"
 Write-Info "  Partition 2: remainder exFAT (STORAGE) - general use"
 
 $diskpartScript = @"
 select disk $sdDiskNumber
 clean
-create partition primary size=4096
+create partition primary size=16384
 select partition 1
 format fs=fat32 label=POUDRE quick
 assign
@@ -204,8 +204,6 @@ Get-ChildItem -Path $sdDrive -Recurse | Where-Object { -not $_.PSIsContainer } |
     Select-Object -ExpandProperty FullName |
     ForEach-Object { Write-Host "  $($_ -replace [regex]::Escape($sdDrive), '')" }
 
-Write-Info "Flushing write cache..."
-$vol = Get-Volume -DriveLetter $newPart.DriveLetter
 Write-Info "All files written to $sdDrive"
 
 Write-Host ""
