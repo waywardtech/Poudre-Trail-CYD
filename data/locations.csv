@@ -1,0 +1,6 @@
+id,name,summary,milesFromStart,hasTradingPost,image
+laporte,Laporte,"Janis's settlement at the door of the valley. The store, the ford, the first decision.",0,true,art/laporte.bmp
+council_tree,Council Tree,"A cottonwood at a bend in the river. Chief Friday has stood here many times.",8,false,art/council_tree.bmp
+virginia_dale,Virginia Dale,"The home station between the mountain and the plain. Run on labor and nerves.",18,true,art/stage_road.bmp
+mason_claim,Mason's Claim,"Downstream ambition hardening into institutions. Every trade here is a position.",30,true,art/mason_claim.bmp
+fort_collins,Fort Collins,"The new order gathers on higher ground. What you carried here is what you became.",42,false,art/fort_collins.bmp
