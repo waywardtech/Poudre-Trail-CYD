@@ -137,15 +137,15 @@ $confirm = Read-Host "Type YES to continue"
 if ($confirm -ne 'YES') { Write-Info "Aborted."; exit 0 }
 
 # --- 4. Wipe and format FAT32 ------------------------------------------------
-# Use diskpart instead of Format-Volume: Windows' Format-Volume refuses FAT32
-# on volumes larger than 32 GB; diskpart has no such limit.
+# FAT32 on Windows is limited to 32 GB max. Create a 4 GB partition - the
+# game content is only a few MB so 4 GB is more than enough.
 
-Write-Info "Wiping and formatting Disk $sdDiskNumber via diskpart (FAT32, no size limit)..."
+Write-Info "Wiping and creating 4 GB FAT32 partition on Disk $sdDiskNumber via diskpart..."
 
 $diskpartScript = @"
 select disk $sdDiskNumber
 clean
-create partition primary
+create partition primary size=4096
 select partition 1
 format fs=fat32 label=POUDRE quick
 assign
