@@ -67,9 +67,12 @@ if ($removable) {
     Write-Info "Found removable disk: Disk $($disk.Number) — $([math]::Round($disk.Size/1GB,1)) GB  $($disk.FriendlyName)"
 
     # Get drive letter of any partition on that disk
-    $part = Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue |
-            Where-Object { $_.DriveLetter -and $_.DriveLetter -ne [char]0 } |
-            Select-Object -First 1
+    $part = $null
+    try {
+        $part = Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue |
+                Where-Object { $_.DriveLetter -and $_.DriveLetter -ne [char]0 } |
+                Select-Object -First 1
+    } catch { $part = $null }
 
     if ($part) {
         $sdDrive = "$($part.DriveLetter):"
