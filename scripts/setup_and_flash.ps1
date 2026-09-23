@@ -140,7 +140,9 @@ if ($confirm -ne 'YES') { Write-Info "Aborted."; exit 0 }
 # FAT32 on Windows is limited to 32 GB max. Create a 4 GB partition - the
 # game content is only a few MB so 4 GB is more than enough.
 
-Write-Info "Wiping and creating 4 GB FAT32 partition on Disk $sdDiskNumber via diskpart..."
+Write-Info "Wiping Disk $sdDiskNumber and creating two partitions via diskpart..."
+Write-Info "  Partition 1: 4 GB FAT32 (POUDRE) - game SD card"
+Write-Info "  Partition 2: remainder exFAT (STORAGE) - general use"
 
 $diskpartScript = @"
 select disk $sdDiskNumber
@@ -148,6 +150,10 @@ clean
 create partition primary size=4096
 select partition 1
 format fs=fat32 label=POUDRE quick
+assign
+create partition primary
+select partition 2
+format fs=exfat label=STORAGE quick
 assign
 exit
 "@
