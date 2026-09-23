@@ -102,7 +102,7 @@ if ($disk.Size -gt 64GB) {
 
 Write-Host ""
 Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Yellow
-Write-Host "  About to FULLY WIPE Disk $sdDiskNumber: $($disk.FriendlyName)" -ForegroundColor Yellow
+Write-Host "  About to FULLY WIPE Disk ${sdDiskNumber}: $($disk.FriendlyName)" -ForegroundColor Yellow
 Write-Host "  Size: $([math]::Round($disk.Size/1GB,2)) GB" -ForegroundColor Yellow
 Write-Host "  ALL DATA ON THIS DISK WILL BE DESTROYED." -ForegroundColor Yellow
 Write-Host "  CYD serial port: $comPort" -ForegroundColor Yellow
