@@ -18,11 +18,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-Push-Location $RepoRoot
+Set-Location $RepoRoot   # cd to repo root so pio commands find platformio.ini
 
 function Write-Info  { param($m) Write-Host "[INFO]  $m" -ForegroundColor Green }
 function Write-Warn  { param($m) Write-Host "[WARN]  $m" -ForegroundColor Yellow }
 function Write-Err   { param($m) Write-Host "[ERROR] $m" -ForegroundColor Red; exit 1 }
+
+Write-Info "Working directory: $RepoRoot"
 
 # ─── 1. Detect CYD COM port ─────────────────────────────────────────────────
 
