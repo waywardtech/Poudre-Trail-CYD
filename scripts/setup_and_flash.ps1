@@ -1,4 +1,4 @@
-# setup_and_flash.ps1 — Poudre Trail CYD full setup (Windows / PowerShell)
+# setup_and_flash.ps1 - Poudre Trail CYD full setup (Windows / PowerShell)
 #
 # Run from the repo root in an Administrator PowerShell:
 #   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
@@ -17,7 +17,7 @@
 $ErrorActionPreference = 'Stop'
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-Set-Location $RepoRoot   # cd to repo root so pio commands find platformio.ini
+Set-Location $RepoRoot
 
 function Write-Info  { param($m) Write-Host "[INFO]  $m" -ForegroundColor Green }
 function Write-Warn  { param($m) Write-Host "[WARN]  $m" -ForegroundColor Yellow }
@@ -25,11 +25,10 @@ function Write-Err   { param($m) Write-Host "[ERROR] $m" -ForegroundColor Red; e
 
 Write-Info "Working directory: $RepoRoot"
 
-# ─── 1. Detect CYD COM port ─────────────────────────────────────────────────
+# --- 1. Detect CYD COM port -------------------------------------------------
 
 Write-Info "Scanning for CYD COM port..."
 
-# Common ESP32 USB-serial chips: Silicon Labs CP210x, WCH CH340/CH9102, FTDI
 $espChips = @('CP210','CH340','CH9102','USB-SERIAL','USB Serial','FTDI')
 
 $comPort = $null
@@ -38,7 +37,6 @@ $candidates = Get-PnpDevice -Class 'Ports' -Status OK -ErrorAction SilentlyConti
 
 if ($candidates) {
     $device = $candidates | Select-Object -First 1
-    # Extract COM number from FriendlyName e.g. "Silicon Labs CP210x (COM4)"
     if ($device.FriendlyName -match '\(COM(\d+)\)') {
         $comPort = "COM$($Matches[1])"
         Write-Info "Found CYD at: $comPort  ($($device.FriendlyName))"
@@ -56,18 +54,21 @@ if (-not $comPort) {
     if (-not ($comPort -match '^COM\d+$')) { Write-Err "Invalid COM port: $comPort" }
 }
 
-# ─── 2. Detect SD card drive ─────────────────────────────────────────────────
+# --- 2. Detect SD card drive -------------------------------------------------
 
 Write-Info "Scanning for SD card / removable drive..."
 
 $sdDrive = $null
+$disk = $null
+$sdDiskNumber = $null
+
 $removable = Get-Disk | Where-Object { $_.BusType -in @('USB','SD','MMC') -and $_.IsSystem -eq $false }
 
 if ($removable) {
     $disk = $removable | Select-Object -First 1
-    Write-Info "Found removable disk: Disk $($disk.Number) — $([math]::Round($disk.Size/1GB,1)) GB  $($disk.FriendlyName)"
+    $diskGB = [math]::Round($disk.Size / 1GB, 1)
+    Write-Info "Found removable disk: Disk $($disk.Number) - $diskGB GB  $($disk.FriendlyName)"
 
-    # Get drive letter of any partition on that disk
     $part = $null
     try {
         $part = Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue |
@@ -82,7 +83,6 @@ if ($removable) {
         Write-Warn "Disk found but no drive letter assigned yet. Will format the whole disk."
     }
 
-    # Store disk number for Format-Volume
     $sdDiskNumber = $disk.Number
 } else {
     Write-Warn "No removable disk found automatically."
@@ -99,23 +99,24 @@ if ($disk.IsSystem -or $disk.IsBoot) {
     Write-Err "SAFETY STOP: Disk $sdDiskNumber is a system/boot disk. Refusing to format."
 }
 if ($disk.Size -gt 64GB) {
-    Write-Warn "Disk $sdDiskNumber is $([math]::Round($disk.Size/1GB,1)) GB — larger than expected for an SD card."
+    $warnGB = [math]::Round($disk.Size / 1GB, 1)
+    Write-Warn "Disk $sdDiskNumber is $warnGB GB - larger than expected for an SD card."
 }
 
-# ─── 3. Confirm ─────────────────────────────────────────────────────────────
+# --- 3. Confirm --------------------------------------------------------------
 
 Write-Host ""
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Yellow
+Write-Host "----------------------------------------------------------------" -ForegroundColor Yellow
 Write-Host "  About to FULLY WIPE Disk ${sdDiskNumber}: $($disk.FriendlyName)" -ForegroundColor Yellow
 Write-Host "  Size: $([math]::Round($disk.Size/1GB,2)) GB" -ForegroundColor Yellow
 Write-Host "  ALL DATA ON THIS DISK WILL BE DESTROYED." -ForegroundColor Yellow
 Write-Host "  CYD serial port: $comPort" -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Yellow
+Write-Host "----------------------------------------------------------------" -ForegroundColor Yellow
 Write-Host ""
 $confirm = Read-Host "Type YES to continue"
 if ($confirm -ne 'YES') { Write-Info "Aborted."; exit 0 }
 
-# ─── 4. Wipe and format FAT32 ────────────────────────────────────────────────
+# --- 4. Wipe and format FAT32 ------------------------------------------------
 
 Write-Info "Clearing disk $sdDiskNumber..."
 Clear-Disk -Number $sdDiskNumber -RemoveData -RemoveOEM -Confirm:$false
@@ -132,7 +133,7 @@ Format-Volume -DriveLetter $newPart.DriveLetter -FileSystem FAT32 -NewFileSystem
 
 Write-Info "SD card formatted. Drive letter: $sdDrive"
 
-# ─── 5. Copy game content ────────────────────────────────────────────────────
+# --- 5. Copy game content ----------------------------------------------------
 
 Write-Info "Creating SD directory structure..."
 New-Item -ItemType Directory -Path "$sdDrive\art"         -Force | Out-Null
@@ -156,7 +157,6 @@ Get-ChildItem -Path $sdDrive -Recurse | Where-Object { -not $_.PSIsContainer } |
     ForEach-Object { Write-Host "  $($_ -replace [regex]::Escape($sdDrive), '')" }
 
 Write-Info "Flushing write cache..."
-# Dismount and remount to force a flush
 $vol = Get-Volume -DriveLetter $newPart.DriveLetter
 Write-Info "All files written to $sdDrive"
 
@@ -164,13 +164,13 @@ Write-Host ""
 Write-Info "You can now safely eject the SD card and insert it into the CYD."
 Read-Host "Press Enter when the SD card is in the CYD and the CYD is connected via USB"
 
-# ─── 6. Build ────────────────────────────────────────────────────────────────
+# --- 6. Build ----------------------------------------------------------------
 
 Write-Info "Building firmware..."
 & pio run
 if ($LASTEXITCODE -ne 0) { Write-Err "PlatformIO build failed." }
 
-# ─── 7. Flash ────────────────────────────────────────────────────────────────
+# --- 7. Flash ----------------------------------------------------------------
 
 Write-Info "Flashing to CYD at $comPort..."
 Write-Host ""
@@ -182,7 +182,7 @@ $env:PLATFORMIO_UPLOAD_PORT = $comPort
 & pio run -t upload --upload-port $comPort
 if ($LASTEXITCODE -ne 0) { Write-Err "Flash failed. Check $comPort and try again." }
 
-# ─── 8. Serial monitor ───────────────────────────────────────────────────────
+# --- 8. Serial monitor -------------------------------------------------------
 
 Write-Host ""
 Write-Info "Flash complete! Opening serial monitor (Ctrl+C to exit)..."
