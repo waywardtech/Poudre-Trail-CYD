@@ -62,12 +62,32 @@ $sdDrive = $null
 $disk = $null
 $sdDiskNumber = $null
 
-$removable = Get-Disk | Where-Object { $_.BusType -in @('USB','SD','MMC') -and $_.IsSystem -eq $false }
+$allRemovable = @(Get-Disk | Where-Object { $_.BusType -in @('USB','SD','MMC') -and $_.IsSystem -eq $false })
 
-if ($removable) {
-    $disk = $removable | Select-Object -First 1
+# Prefer disks whose name suggests an SD card reader
+$sdKeywords = @('SD','MMC','Card','Reader','Transcend','SanDisk','Kingston','Samsung')
+$sdCandidates = @($allRemovable | Where-Object { $n = $_.FriendlyName; $sdKeywords | Where-Object { $n -match $_ } })
+
+if ($sdCandidates.Count -eq 1) {
+    $disk = $sdCandidates[0]
+} elseif ($allRemovable.Count -eq 1) {
+    $disk = $allRemovable[0]
+} else {
+    # Multiple removable disks - list them and ask
+    Write-Warn "Multiple removable disks found. Please choose the SD card:"
+    Write-Host ""
+    $allRemovable | ForEach-Object {
+        $gb = [math]::Round($_.Size / 1GB, 1)
+        Write-Host "  Disk $($_.Number) - $gb GB - $($_.FriendlyName) [$($_.BusType)]"
+    }
+    Write-Host ""
+    $sdDiskNumber = [int](Read-Host "Enter Disk Number for SD card")
+    $disk = Get-Disk -Number $sdDiskNumber
+}
+
+if ($disk) {
     $diskGB = [math]::Round($disk.Size / 1GB, 1)
-    Write-Info "Found removable disk: Disk $($disk.Number) - $diskGB GB  $($disk.FriendlyName)"
+    Write-Info "Selected SD disk: Disk $($disk.Number) - $diskGB GB  $($disk.FriendlyName)"
 
     $part = $null
     try {
