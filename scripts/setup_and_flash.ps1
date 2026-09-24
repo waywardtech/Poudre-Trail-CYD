@@ -1,16 +1,15 @@
-# setup_and_flash.ps1 - Poudre Trail CYD full setup (Windows / PowerShell)
+# setup_and_flash.ps1 - Poudre Trail CYD setup script (Windows / PowerShell)
 #
 # Run from the repo root in an Administrator PowerShell:
 #   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 #   .\scripts\setup_and_flash.ps1
 #
-# What it does:
-#   1. Detects the CYD COM port (CP2102 / CH340 / CH9102)
-#   2. Detects the SD card drive letter
-#   3. Full-formats SD card as FAT32 (label: POUDRE)
-#   4. Creates correct SD directory layout and copies all game content
-#   5. Builds and flashes firmware via PlatformIO
-#   6. Opens serial monitor at 115200 baud
+# Steps (select at the menu):
+#   1  Full setup     - format SD + copy data + build + flash
+#   2  Format SD only - wipe and partition the SD card
+#   3  Copy data only - copy game files to an already-formatted POUDRE drive
+#   4  Build + flash  - compile and flash firmware (SD card not needed)
+#   5  SD prep only   - format SD + copy data (no flash)
 
 #Requires -RunAsAdministrator
 
@@ -23,128 +22,169 @@ function Write-Info  { param($m) Write-Host "[INFO]  $m" -ForegroundColor Green 
 function Write-Warn  { param($m) Write-Host "[WARN]  $m" -ForegroundColor Yellow }
 function Write-Err   { param($m) Write-Host "[ERROR] $m" -ForegroundColor Red; exit 1 }
 
+# Wrapper: use pio if on PATH, otherwise fall back to python -m platformio
+function Invoke-Pio {
+    param([string[]]$PioArgs)
+    if (Get-Command pio -ErrorAction SilentlyContinue) {
+        & pio @PioArgs
+    } else {
+        & python -m platformio @PioArgs
+    }
+    return $LASTEXITCODE
+}
+
 Write-Info "Working directory: $RepoRoot"
+Write-Host ""
 
-# --- 1. Detect CYD COM port -------------------------------------------------
+# --- Step selection menu -----------------------------------------------------
 
-Write-Info "Scanning for CYD COM port..."
+Write-Host "  What would you like to do?" -ForegroundColor Cyan
+Write-Host "  [1]  Full setup     - format SD + copy data + build + flash" -ForegroundColor Cyan
+Write-Host "  [2]  Format SD only - wipe and re-partition the SD card" -ForegroundColor Cyan
+Write-Host "  [3]  Copy data only - copy game files to POUDRE drive" -ForegroundColor Cyan
+Write-Host "  [4]  Build + flash  - compile and flash firmware only" -ForegroundColor Cyan
+Write-Host "  [5]  SD prep only   - format SD + copy data (no flash)" -ForegroundColor Cyan
+Write-Host ""
 
-$espChips = @('CP210','CH340','CH9102','USB-SERIAL','USB Serial','FTDI')
+$choice = Read-Host "Enter choice (1-5)"
+switch ($choice) {
+    '1' { $doFormat = $true;  $doCopy = $true;  $doFlash = $true  }
+    '2' { $doFormat = $true;  $doCopy = $false; $doFlash = $false }
+    '3' { $doFormat = $false; $doCopy = $true;  $doFlash = $false }
+    '4' { $doFormat = $false; $doCopy = $false; $doFlash = $true  }
+    '5' { $doFormat = $true;  $doCopy = $true;  $doFlash = $false }
+    default { Write-Err "Invalid choice: $choice" }
+}
+
+Write-Host ""
+
+# --- Detect CYD COM port (only needed for flash) -----------------------------
 
 $comPort = $null
-$candidates = Get-PnpDevice -Class 'Ports' -Status OK -ErrorAction SilentlyContinue |
-              Where-Object { $name = $_.FriendlyName; $espChips | Where-Object { $name -match $_ } }
 
-if ($candidates) {
-    $device = $candidates | Select-Object -First 1
-    if ($device.FriendlyName -match '\(COM(\d+)\)') {
-        $comPort = "COM$($Matches[1])"
-        Write-Info "Found CYD at: $comPort  ($($device.FriendlyName))"
+if ($doFlash) {
+    Write-Info "Scanning for CYD COM port..."
+
+    $espChips = @('CP210','CH340','CH9102','USB-SERIAL','USB Serial','FTDI')
+    $candidates = Get-PnpDevice -Class 'Ports' -Status OK -ErrorAction SilentlyContinue |
+                  Where-Object { $name = $_.FriendlyName; $espChips | Where-Object { $name -match $_ } }
+
+    if ($candidates) {
+        $device = $candidates | Select-Object -First 1
+        if ($device.FriendlyName -match '\(COM(\d+)\)') {
+            $comPort = "COM$($Matches[1])"
+            Write-Info "Found CYD at: $comPort  ($($device.FriendlyName))"
+        }
+    }
+
+    if (-not $comPort) {
+        Write-Warn "Could not auto-detect an ESP32 COM port."
+        Write-Host ""
+        Write-Host "Available COM ports:"
+        Get-PnpDevice -Class 'Ports' -Status OK -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "  $($_.FriendlyName)" }
+        Write-Host ""
+        $comPort = Read-Host "Enter COM port (e.g. COM4)"
+        if (-not ($comPort -match '^COM\d+$')) { Write-Err "Invalid COM port: $comPort" }
     }
 }
 
-if (-not $comPort) {
-    Write-Warn "Could not auto-detect an ESP32 COM port."
-    Write-Host ""
-    Write-Host "Available COM ports:"
-    Get-PnpDevice -Class 'Ports' -Status OK -ErrorAction SilentlyContinue |
-        ForEach-Object { Write-Host "  $($_.FriendlyName)" }
-    Write-Host ""
-    $comPort = Read-Host "Enter COM port (e.g. COM4)"
-    if (-not ($comPort -match '^COM\d+$')) { Write-Err "Invalid COM port: $comPort" }
-}
+# --- Detect SD card (only needed for format or copy) -------------------------
 
-# --- 2. Detect SD card drive -------------------------------------------------
-
-Write-Info "Scanning for SD card / removable drive..."
-
-$sdDrive = $null
-$disk = $null
+$sdDrive      = $null
+$disk         = $null
 $sdDiskNumber = $null
 
-$allRemovable = @(Get-Disk | Where-Object { $_.BusType -in @('USB','SD','MMC') -and $_.IsSystem -eq $false })
+if ($doFormat -or $doCopy) {
 
-# Prefer disks whose name suggests an SD card reader
-$sdKeywords = @('SD','MMC','Card','Reader','Transcend','SanDisk','Kingston','Samsung')
-$sdCandidates = @($allRemovable | Where-Object { $n = $_.FriendlyName; $sdKeywords | Where-Object { $n -match $_ } })
+    if ($doFormat) {
 
-if ($sdCandidates.Count -eq 1) {
-    $disk = $sdCandidates[0]
-} elseif ($allRemovable.Count -eq 1) {
-    $disk = $allRemovable[0]
-} else {
-    # Multiple removable disks - list them and ask
-    Write-Warn "Multiple removable disks found. Please choose the SD card:"
-    Write-Host ""
-    $allRemovable | ForEach-Object {
-        $gb = [math]::Round($_.Size / 1GB, 1)
-        Write-Host "  Disk $($_.Number) - $gb GB - $($_.FriendlyName) [$($_.BusType)]"
-    }
-    Write-Host ""
-    $sdDiskNumber = [int](Read-Host "Enter Disk Number for SD card")
-    $disk = Get-Disk -Number $sdDiskNumber
-}
+        # Need the raw disk for formatting
+        Write-Info "Scanning for SD card / removable drive..."
 
-if ($disk) {
-    $diskGB = [math]::Round($disk.Size / 1GB, 1)
-    Write-Info "Selected SD disk: Disk $($disk.Number) - $diskGB GB  $($disk.FriendlyName)"
+        $allRemovable = @(Get-Disk | Where-Object { $_.BusType -in @('USB','SD','MMC') -and $_.IsSystem -eq $false })
+        $sdKeywords   = @('SD','MMC','Card','Reader','Transcend','SanDisk','Kingston','Samsung')
+        $sdCandidates = @($allRemovable | Where-Object { $n = $_.FriendlyName; $sdKeywords | Where-Object { $n -match $_ } })
 
-    $part = $null
-    try {
-        $part = Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue |
-                Where-Object { $_.DriveLetter -and $_.DriveLetter -ne [char]0 } |
-                Select-Object -First 1
-    } catch { $part = $null }
+        if ($sdCandidates.Count -eq 1) {
+            $disk = $sdCandidates[0]
+        } elseif ($allRemovable.Count -eq 1) {
+            $disk = $allRemovable[0]
+        } else {
+            Write-Warn "Multiple removable disks found. Please choose the SD card:"
+            Write-Host ""
+            $allRemovable | ForEach-Object {
+                $gb = [math]::Round($_.Size / 1GB, 1)
+                Write-Host "  Disk $($_.Number) - $gb GB - $($_.FriendlyName) [$($_.BusType)]"
+            }
+            Write-Host ""
+            $sdDiskNumber = [int](Read-Host "Enter Disk Number for SD card")
+            $disk = Get-Disk -Number $sdDiskNumber
+        }
 
-    if ($part) {
-        $sdDrive = "$($part.DriveLetter):"
-        Write-Info "SD card drive letter: $sdDrive"
+        if (-not $disk) {
+            Write-Warn "No removable disk found automatically."
+            Write-Host ""
+            Get-Disk | Format-Table Number, FriendlyName, BusType, Size, PartitionStyle
+            Write-Host ""
+            $sdDiskNumber = [int](Read-Host "Enter Disk Number for SD card (e.g. 1)")
+            $disk = Get-Disk -Number $sdDiskNumber
+        }
+
+        $sdDiskNumber = $disk.Number
+        $diskGB = [math]::Round($disk.Size / 1GB, 1)
+        Write-Info "Selected SD disk: Disk $sdDiskNumber - $diskGB GB  $($disk.FriendlyName)"
+
+        # Safety: refuse system/boot disks
+        if ($disk.IsSystem -or $disk.IsBoot) {
+            Write-Err "SAFETY STOP: Disk $sdDiskNumber is a system/boot disk. Refusing to format."
+        }
+        if ($disk.Size -gt 64GB) {
+            Write-Warn "Disk $sdDiskNumber is $diskGB GB - larger than expected for an SD card."
+        }
+
     } else {
-        Write-Warn "Disk found but no drive letter assigned yet. Will format the whole disk."
+
+        # Copy-only: find the POUDRE-labelled FAT32 volume
+        Write-Info "Looking for POUDRE volume (FAT32, labelled POUDRE)..."
+        $poudreVol = Get-Volume -ErrorAction SilentlyContinue |
+                     Where-Object { $_.FileSystemLabel -eq 'POUDRE' -and $_.DriveLetter } |
+                     Select-Object -First 1
+        if ($poudreVol) {
+            $sdDrive = "$($poudreVol.DriveLetter):"
+            Write-Info "Found POUDRE volume at $sdDrive"
+        } else {
+            Write-Warn "Could not find a POUDRE-labelled FAT32 volume."
+            Get-Volume | Format-Table DriveLetter, FileSystemLabel, FileSystem, Size
+            $letter = Read-Host "Enter the drive letter of the POUDRE SD partition (e.g. E)"
+            $sdDrive = "${letter}:"
+        }
     }
+}
 
-    $sdDiskNumber = $disk.Number
-} else {
-    Write-Warn "No removable disk found automatically."
+# --- Confirm before format ---------------------------------------------------
+
+if ($doFormat) {
     Write-Host ""
-    Write-Host "Connected disks:"
-    Get-Disk | Format-Table Number, FriendlyName, BusType, Size, PartitionStyle
+    Write-Host "----------------------------------------------------------------" -ForegroundColor Yellow
+    Write-Host "  About to FULLY WIPE Disk ${sdDiskNumber}: $($disk.FriendlyName)" -ForegroundColor Yellow
+    Write-Host "  Size: $([math]::Round($disk.Size/1GB,2)) GB" -ForegroundColor Yellow
+    Write-Host "  ALL DATA ON THIS DISK WILL BE DESTROYED." -ForegroundColor Yellow
+    if ($comPort) { Write-Host "  CYD serial port: $comPort" -ForegroundColor Yellow }
+    Write-Host "----------------------------------------------------------------" -ForegroundColor Yellow
     Write-Host ""
-    $sdDiskNumber = [int](Read-Host "Enter Disk Number for SD card (e.g. 1)")
-    $disk = Get-Disk -Number $sdDiskNumber
+    $confirm = Read-Host "Type YES to continue"
+    if ($confirm -ne 'YES') { Write-Info "Aborted."; exit 0 }
 }
 
-# Safety: refuse internal / system disks
-if ($disk.IsSystem -or $disk.IsBoot) {
-    Write-Err "SAFETY STOP: Disk $sdDiskNumber is a system/boot disk. Refusing to format."
-}
-if ($disk.Size -gt 64GB) {
-    $warnGB = [math]::Round($disk.Size / 1GB, 1)
-    Write-Warn "Disk $sdDiskNumber is $warnGB GB - larger than expected for an SD card."
-}
+# --- Format SD ---------------------------------------------------------------
 
-# --- 3. Confirm --------------------------------------------------------------
+if ($doFormat) {
+    Write-Info "Wiping Disk $sdDiskNumber and creating two partitions via diskpart..."
+    Write-Info "  Partition 1: 16 GB FAT32  (POUDRE)  - game / CYD projects"
+    Write-Info "  Partition 2: remainder exFAT (STORAGE) - general use"
 
-Write-Host ""
-Write-Host "----------------------------------------------------------------" -ForegroundColor Yellow
-Write-Host "  About to FULLY WIPE Disk ${sdDiskNumber}: $($disk.FriendlyName)" -ForegroundColor Yellow
-Write-Host "  Size: $([math]::Round($disk.Size/1GB,2)) GB" -ForegroundColor Yellow
-Write-Host "  ALL DATA ON THIS DISK WILL BE DESTROYED." -ForegroundColor Yellow
-Write-Host "  CYD serial port: $comPort" -ForegroundColor Yellow
-Write-Host "----------------------------------------------------------------" -ForegroundColor Yellow
-Write-Host ""
-$confirm = Read-Host "Type YES to continue"
-if ($confirm -ne 'YES') { Write-Info "Aborted."; exit 0 }
-
-# --- 4. Wipe and format FAT32 ------------------------------------------------
-# FAT32 on Windows is limited to 32 GB max. Create a 4 GB partition - the
-# game content is only a few MB so 4 GB is more than enough.
-
-Write-Info "Wiping Disk $sdDiskNumber and creating two partitions via diskpart..."
-Write-Info "  Partition 1: 16 GB FAT32 (POUDRE) - game SD card / CYD projects"
-Write-Info "  Partition 2: remainder exFAT (STORAGE) - general use"
-
-$diskpartScript = @"
+    $diskpartScript = @"
 select disk $sdDiskNumber
 clean
 create partition primary size=16384
@@ -158,85 +198,94 @@ assign
 exit
 "@
 
-$diskpartScript | diskpart | ForEach-Object { Write-Host "  $_" }
-if ($LASTEXITCODE -ne 0) { Write-Err "diskpart failed (exit code $LASTEXITCODE)." }
+    $diskpartScript | diskpart | ForEach-Object { Write-Host "  $_" }
+    if ($LASTEXITCODE -ne 0) { Write-Err "diskpart failed (exit code $LASTEXITCODE)." }
 
-Write-Info "Waiting for Windows to assign a drive letter..."
-Start-Sleep -Seconds 3
+    Write-Info "Waiting for Windows to assign drive letters..."
+    Start-Sleep -Seconds 3
 
-$sdDrive = $null
-try {
-    $fmtPart = Get-Partition -DiskNumber $sdDiskNumber -ErrorAction SilentlyContinue |
-               Where-Object { $_.DriveLetter -and $_.DriveLetter -ne [char]0 } |
-               Select-Object -First 1
-    if ($fmtPart) { $sdDrive = "$($fmtPart.DriveLetter):" }
-} catch {}
+    $sdDrive = $null
+    try {
+        $fmtPart = Get-Partition -DiskNumber $sdDiskNumber -ErrorAction SilentlyContinue |
+                   Where-Object { $_.DriveLetter -and $_.DriveLetter -ne [char]0 } |
+                   Select-Object -First 1
+        if ($fmtPart) { $sdDrive = "$($fmtPart.DriveLetter):" }
+    } catch {}
 
-if (-not $sdDrive) {
-    Write-Warn "Could not detect drive letter automatically."
-    Get-Volume | Format-Table DriveLetter, FileSystemLabel, FileSystem, Size
-    $letter = Read-Host "Enter the drive letter assigned to the SD card (e.g. E)"
-    $sdDrive = "${letter}:"
+    if (-not $sdDrive) {
+        Write-Warn "Could not detect drive letter automatically."
+        Get-Volume | Format-Table DriveLetter, FileSystemLabel, FileSystem, Size
+        $letter = Read-Host "Enter the drive letter assigned to the POUDRE partition (e.g. E)"
+        $sdDrive = "${letter}:"
+    }
+
+    Write-Info "SD card formatted. POUDRE drive: $sdDrive"
 }
 
-Write-Info "SD card formatted. Drive letter: $sdDrive"
+# --- Copy game content -------------------------------------------------------
 
-# --- 5. Copy game content ----------------------------------------------------
+if ($doCopy) {
+    Write-Info "Copying game content to $sdDrive ..."
 
-Write-Info "Creating SD directory structure..."
-New-Item -ItemType Directory -Path "$sdDrive\art"         -Force | Out-Null
-New-Item -ItemType Directory -Path "$sdDrive\data\events" -Force | Out-Null
-New-Item -ItemType Directory -Path "$sdDrive\saves"       -Force | Out-Null
+    New-Item -ItemType Directory -Path "$sdDrive\art"         -Force | Out-Null
+    New-Item -ItemType Directory -Path "$sdDrive\data\events" -Force | Out-Null
+    New-Item -ItemType Directory -Path "$sdDrive\saves"       -Force | Out-Null
 
-Write-Info "Copying BMP art files (12 files)..."
-Copy-Item "$RepoRoot\data\art\*.bmp" "$sdDrive\art\" -Force
+    Write-Info "Copying BMP art files..."
+    Copy-Item "$RepoRoot\data\art\*.bmp" "$sdDrive\art\" -Force
 
-Write-Info "Copying CSV game content..."
-Copy-Item "$RepoRoot\data\locations.csv" "$sdDrive\data\" -Force
-Copy-Item "$RepoRoot\data\events.csv"    "$sdDrive\data\" -Force
-Copy-Item "$RepoRoot\data\trades.csv"    "$sdDrive\data\" -Force
+    Write-Info "Copying CSV game content..."
+    Copy-Item "$RepoRoot\data\locations.csv" "$sdDrive\data\" -Force
+    Copy-Item "$RepoRoot\data\events.csv"    "$sdDrive\data\" -Force
+    Copy-Item "$RepoRoot\data\trades.csv"    "$sdDrive\data\" -Force
 
-Write-Info "Copying event body text files..."
-Copy-Item "$RepoRoot\data\events\*.txt" "$sdDrive\data\events\" -Force
+    Write-Info "Copying event body text files..."
+    Copy-Item "$RepoRoot\data\events\*.txt" "$sdDrive\data\events\" -Force
 
-Write-Info "SD card contents:"
-Get-ChildItem -Path $sdDrive -Recurse | Where-Object { -not $_.PSIsContainer } |
-    Select-Object -ExpandProperty FullName |
-    ForEach-Object { Write-Host "  $($_ -replace [regex]::Escape($sdDrive), '')" }
+    Write-Info "Contents of $sdDrive :"
+    Get-ChildItem -Path $sdDrive -Recurse | Where-Object { -not $_.PSIsContainer } |
+        Select-Object -ExpandProperty FullName |
+        ForEach-Object { Write-Host "  $($_ -replace [regex]::Escape($sdDrive), '')" }
 
-Write-Info "All files written to $sdDrive"
+    Write-Info "All files written to $sdDrive"
+}
+
+# --- Prompt to move SD card to CYD (only if SD step ran and flash follows) ---
+
+if (($doFormat -or $doCopy) -and $doFlash) {
+    Write-Host ""
+    Write-Info "You can now safely eject the SD card and insert it into the CYD."
+    Read-Host "Press Enter when the SD card is in the CYD and the CYD is connected via USB"
+}
+
+# --- Build + flash -----------------------------------------------------------
+
+if ($doFlash) {
+    Write-Info "Building firmware..."
+    $rc = Invoke-Pio @('run')
+    if ($rc -ne 0) { Write-Err "PlatformIO build failed." }
+
+    Write-Info "Flashing to CYD at $comPort..."
+    Write-Host ""
+    Write-Host "  If upload hangs at 'Connecting...', hold the BOOT button on the"
+    Write-Host "  CYD for 2 seconds then release it to enter bootloader mode."
+    Write-Host ""
+
+    $env:PLATFORMIO_UPLOAD_PORT = $comPort
+    $rc = Invoke-Pio @('run', '-t', 'upload', '--upload-port', $comPort)
+    if ($rc -ne 0) { Write-Err "Flash failed. Check $comPort and try again." }
+
+    Write-Host ""
+    Write-Info "Flash complete! Opening serial monitor (Ctrl+C to exit)..."
+    Write-Host ""
+    Write-Host "  Expected first lines on the CYD:"
+    Write-Host "    SD content loaded"
+    Write-Host "    (or: SD init failed - fallback world)"
+    Write-Host ""
+    Start-Sleep -Seconds 1
+
+    Invoke-Pio @('device', 'monitor', '--port', $comPort, '--baud', '115200') | Out-Null
+}
 
 Write-Host ""
-Write-Info "You can now safely eject the SD card and insert it into the CYD."
-Read-Host "Press Enter when the SD card is in the CYD and the CYD is connected via USB"
-
-# --- 6. Build ----------------------------------------------------------------
-
-Write-Info "Building firmware..."
-& pio run
-if ($LASTEXITCODE -ne 0) { Write-Err "PlatformIO build failed." }
-
-# --- 7. Flash ----------------------------------------------------------------
-
-Write-Info "Flashing to CYD at $comPort..."
-Write-Host ""
-Write-Host "  If upload hangs at 'Connecting...', hold the BOOT button on the"
-Write-Host "  CYD for 2 seconds then release it to enter bootloader mode."
-Write-Host ""
-
-$env:PLATFORMIO_UPLOAD_PORT = $comPort
-& pio run -t upload --upload-port $comPort
-if ($LASTEXITCODE -ne 0) { Write-Err "Flash failed. Check $comPort and try again." }
-
-# --- 8. Serial monitor -------------------------------------------------------
-
-Write-Host ""
-Write-Info "Flash complete! Opening serial monitor (Ctrl+C to exit)..."
-Write-Host ""
-Write-Host "  Expected first lines on the CYD:"
-Write-Host "    SD content loaded"
-Write-Host "    (or: SD init failed - fallback world)"
-Write-Host ""
-Start-Sleep -Seconds 1
-
-& pio device monitor --port $comPort --baud 115200
+Write-Info "Done."
