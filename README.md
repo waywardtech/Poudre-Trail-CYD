@@ -3,6 +3,50 @@
 A narrative travel game for the **ESP32-2432S028R** ("Cheap Yellow Display").  
 Set in the Cache la Poudre valley, Colorado, 1861.
 
+## Quick Start
+
+### Windows
+
+```powershell
+# In an Administrator PowerShell, from the repo root:
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\scripts\setup_and_flash.ps1
+```
+
+A menu lets you run each step independently:
+
+| Option | Action |
+|--------|--------|
+| 1 | Full setup — format SD + copy data + build + flash |
+| 2 | Format SD only — wipe and partition the SD card |
+| 3 | Copy data only — copy game files to an existing POUDRE volume |
+| 4 | Build + flash — compile and upload firmware (no SD needed) |
+| 5 | SD prep only — format SD + copy data (no flash) |
+
+The script auto-detects your ESP32 COM port and SD card, creates a 16 GB FAT32 `POUDRE` partition and an exFAT `STORAGE` partition on the remainder, copies all game content, then builds and flashes via PlatformIO.
+
+**Requirements:** Python 3, `pip install platformio` (the script falls back to `python -m platformio` if `pio` is not on PATH).
+
+### Linux / macOS
+
+```bash
+chmod +x scripts/setup_and_flash.sh
+sudo ./scripts/setup_and_flash.sh
+```
+
+Same five-option menu as the Windows script. Additional requirements: `dosfstools` (`sudo apt install dosfstools` / `brew install dosfstools`) and `exfatprogs` (`sudo apt install exfatprogs`) for the two-partition layout.
+
+### Manual build (no SD card needed)
+
+```bash
+pip install platformio
+pio run              # compile
+pio run -t upload    # flash (auto-detects port)
+pio device monitor   # serial output at 115200
+```
+
+The firmware runs a full fallback world with hard-coded content when no SD card is present.
+
 ## Features
 
 - **Split reputation system** — separate scores for Janis, Chief Friday, and Mason track relationships independently; each NPC's rep label shows in the status bar (`Neutral` → `Open` → `Trusting`/`Trusted`)
@@ -38,14 +82,17 @@ Set in the Cache la Poudre valley, Colorado, 1861.
 
 ### PlatformIO (recommended)
 
+Install PlatformIO Core once, then build from the repo root:
+
 ```bash
-# From repo root
+pip install platformio
+
 pio run                  # compile
 pio run -t upload        # flash to device
 pio device monitor       # serial output at 115200
 ```
 
-Requires PlatformIO Core ≥ 6.x. The `platformio.ini` at the repo root configures the `esp32-2432S028R` environment with TFT_eSPI build flags — no `User_Setup.h` edits needed.
+The `platformio.ini` at the repo root configures the `esp32-2432S028R` environment with TFT_eSPI build flags — no `User_Setup.h` edits needed. Requires PlatformIO Core >= 6.x.
 
 ### Host tests (g++)
 
