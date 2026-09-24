@@ -383,6 +383,26 @@ void setup() {
         loadGameContent();
     }
 
+    game.startGame();
+
+    // Serial state dump so you can probe the game without the display
+    {
+        Snapshot s = game.snapshot();
+        Serial.printf("[GAME] mode=%d loc=%s\n", (int)s.mode,
+                      s.locationName.c_str());
+        Serial.printf("[GAME] headline=%s\n", s.headline.c_str());
+        Serial.printf("[GAME] food=%d ammo=%d med=%d\n",
+                      s.resources.food, s.resources.ammunition,
+                      s.resources.medicine);
+        Serial.printf("[GAME] repJ=%d repF=%d repM=%d\n",
+                      s.resources.repJanis, s.resources.repFriday,
+                      s.resources.repMason);
+        Serial.printf("[GAME] options=%zu\n", s.optionLabels.size());
+        for (size_t i = 0; i < s.optionLabels.size(); ++i)
+            Serial.printf("[GAME]   [%zu] %s\n", i, s.optionLabels[i].c_str());
+        Serial.printf("[GAME] bootMsg=%s\n", bootMessage.c_str());
+    }
+
     // Boot splash
     tft.setTextColor(TFT_WHITE);
     tft.setTextSize(2);
