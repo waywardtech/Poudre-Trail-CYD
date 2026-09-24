@@ -367,13 +367,19 @@ void setup() {
     touch.begin();
     // Touch rotation and axis swap handled in mapTouchX/Y calibration constants
 
-    // Reconfigure global SPI with CYD bus pins before SD init.
-    // TFT_eSPI uses its own internal SPIClass(VSPI); the global SPI
-    // singleton still has default pins (18/19/23) unless we set it here.
-    SPI.begin(14, 12, 13, PIN_SD_CS); // SCK, MISO, MOSI, SS
-    if (!SD.begin(PIN_SD_CS)) {
+    // touch.begin() calls SPI.begin() internally, resetting pins to ESP32
+    // defaults (18/19/23). Re-init the global SPI bus to the CYD pins.
+    // Pass no SS here — SD library manages CS itself; passing SS to SPI.begin()
+    // can cause the hardware to auto-assert it unexpectedly.
+    SPI.begin(14, 12, 13, -1); // SCK, MISO, MOSI, no SS
+    delay(10); // let bus settle after reconfiguration
+
+    Serial.printf("[SD] Calling SD.begin(cs=%d)...\n", PIN_SD_CS);
+    if (!SD.begin(PIN_SD_CS, SPI, 4000000)) {
+        Serial.println("[SD] FAILED - running fallback world");
         bootMessage = "SD init failed - fallback world";
     } else {
+        Serial.println("[SD] OK");
         loadGameContent();
     }
 
