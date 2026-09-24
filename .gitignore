@@ -19,3 +19,4 @@ build/
 # Local env/config
 .env
 *.local
+test/test_engine
