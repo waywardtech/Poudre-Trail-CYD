@@ -29,8 +29,11 @@ static constexpr int TOUCH_MAX_X = 3850;
 static constexpr int TOUCH_MIN_Y = 240;
 static constexpr int TOUCH_MAX_Y = 3850;
 
-static constexpr int TFT_W = 320;
-static constexpr int TFT_H = 240;
+// Set from the panel after setRotation(1): 320x240 (2.8") or 480x320 (3.5")
+static int TFT_W = 320;
+static int TFT_H = 240;
+static bool sdMounted = false;
+static String artStatus;
 
 static constexpr const char* SAVE_PATH = "/saves/slot1.sav";
 
@@ -55,8 +58,17 @@ static char     sbuf[80];      // scratch buffer for snprintf
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-static int mapTouchX(int raw) { return map(raw, TOUCH_MIN_X, TOUCH_MAX_X, 0, TFT_W); }
-static int mapTouchY(int raw) { return map(raw, TOUCH_MIN_Y, TOUCH_MAX_Y, 0, TFT_H); }
+// Flip if taps land mirrored on your panel (serial prints raw + mapped coords).
+static constexpr bool TOUCH_FLIP_X = false;
+static constexpr bool TOUCH_FLIP_Y = false;
+static int mapTouchX(int raw) {
+    return TOUCH_FLIP_X ? map(raw, TOUCH_MIN_X, TOUCH_MAX_X, TFT_W, 0)
+                        : map(raw, TOUCH_MIN_X, TOUCH_MAX_X, 0, TFT_W);
+}
+static int mapTouchY(int raw) {
+    return TOUCH_FLIP_Y ? map(raw, TOUCH_MIN_Y, TOUCH_MAX_Y, TFT_H, 0)
+                        : map(raw, TOUCH_MIN_Y, TOUCH_MAX_Y, 0, TFT_H);
+}
 static int clampInt(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 static String readTextFile(const char* path) {
@@ -95,8 +107,8 @@ static void buildButtons(const Snapshot& s) {
     int count = (int)s.optionLabels.size();
     if (count > 4) count = 4;
     if (count == 0) return;
-    const int TOP = 164;
-    const int BOT = TFT_H - 6;
+    const int TOP = TFT_H * 164 / 240;
+    const int BOT = TFT_H - 16;
     const int GAP = 4;
     int avail = BOT - TOP;
     int bh    = (avail - GAP * (count - 1)) / count;
@@ -134,10 +146,11 @@ static uint32_t readLE32(File& f) {
 
 static bool drawBmpFromSd(const String& path, int x, int y, int maxW, int maxH) {
     if (path.length() == 0) return false;
+    if (!sdMounted) { artStatus = "SD not mounted"; return false; }
     File bmp = SD.open(path.c_str(), FILE_READ);
-    if (!bmp) return false;
+    if (!bmp) { artStatus = "Missing file"; return false; }
 
-    if (readLE16(bmp) != 0x4D42) { bmp.close(); return false; }
+    if (readLE16(bmp) != 0x4D42) { bmp.close(); artStatus = "Bad BMP"; return false; }
     readLE32(bmp); readLE32(bmp);                 // file size, reserved
     uint32_t pixOff   = readLE32(bmp);
     uint32_t hdrSize  = readLE32(bmp);
@@ -160,7 +173,6 @@ static bool drawBmpFromSd(const String& path, int x, int y, int maxW, int maxH) 
     uint8_t  rowBuf[288];
     uint16_t lineBuf[96];
 
-    tft.startWrite();
     for (int row = 0; row < drawH; ++row) {
         int srcRow = flip ? (bmpH - 1 - row) : row;
         bmp.seek(pixOff + (uint32_t)srcRow * rowSize);
@@ -171,10 +183,8 @@ static bool drawBmpFromSd(const String& path, int x, int y, int maxW, int maxH) 
                          | ((uint16_t)(g & 0xFC) << 3)
                          | (b >> 3);
         }
-        tft.setAddrWindow(x, y + row, drawW, 1);
-        tft.pushPixels(lineBuf, drawW);
+        tft.pushImage(x, y + row, drawW, 1, lineBuf);
     }
-    tft.endWrite();
     bmp.close();
     return true;
 }
@@ -202,15 +212,15 @@ static void drawWrapped(const String& text, int x, int y, int width, int textSiz
 }
 
 static void renderArt(const Snapshot& s) {
-    const int AX = TFT_W - 100, AY = 60, AW = 92, AH = 68;
+    const int AX = TFT_W - 100, AY = 88, AW = 92, AH = 68;
     tft.fillRoundRect(AX-3, AY-3, AW+6, AH+6, 6, 0x1082);
     bool ok = drawBmpFromSd(String("/") + s.imagePath.c_str(), AX, AY, AW, AH);
     if (!ok) {
         tft.fillRect(AX, AY, AW, AH, 0x2965);
         tft.setTextColor(TFT_WHITE);
         tft.setTextSize(1);
-        tft.setCursor(AX+8, AY+28); tft.print("No BMP art");
-        tft.setCursor(AX+8, AY+40); tft.print("on SD card");
+        tft.setCursor(AX+8, AY+28); tft.print("No art:");
+        tft.setCursor(AX+8, AY+40); tft.print(artStatus.length() ? artStatus : String("unavailable"));
     }
 }
 
@@ -245,17 +255,20 @@ static void renderSnapshot(const Snapshot& s) {
     tft.setCursor(6, 48); tft.print(sbuf);
 
     // Event / body panel
-    tft.fillRoundRect(6, 60, TFT_W - 12, 98, 6, 0x18C3);
+    const int panelH = TFT_H * 98 / 240;
+    tft.fillRoundRect(6, 60, TFT_W - 12, panelH, 6, 0x18C3);
     tft.setTextColor(0xFD20); // amber
     tft.setTextSize(2);
     tft.setCursor(12, 66);
     String hl = s.headline.c_str();
-    if (hl.length() > 16) hl = hl.substring(0, 16);
+    const int hlMax = (TFT_W - 24) / 12;
+    if ((int)hl.length() > hlMax) hl = hl.substring(0, hlMax - 3) + "...";
     tft.print(hl);
 
     tft.setTextColor(TFT_WHITE);
     tft.setTextSize(1);
-    drawWrapped(String(s.body.c_str()), 12, 88, TFT_W - 120, 1, 6);
+    const int bodyLines = (60 + panelH - 4 - 88) / 10;
+    drawWrapped(String(s.body.c_str()), 12, 88, TFT_W - 120, 1, bodyLines);
     renderArt(s);
 
     // Buttons
@@ -268,7 +281,8 @@ static void renderSnapshot(const Snapshot& s) {
         tft.setTextSize(1);
         tft.setCursor(b.x+8, b.y + b.h/2 - 4);
         String lbl = b.label;
-        if (lbl.length() > 46) lbl = lbl.substring(0, 43) + "...";
+        const int lblMax = (b.w - 16) / 6;
+        if ((int)lbl.length() > lblMax) lbl = lbl.substring(0, lblMax - 3) + "...";
         tft.print(lbl);
     }
 
@@ -278,7 +292,8 @@ static void renderSnapshot(const Snapshot& s) {
     tft.setTextSize(1);
     tft.setCursor(4, TFT_H - 10);
     String foot = (transientUntil > millis()) ? transientMsg : String(s.footer.c_str());
-    if (foot.length() > 53) foot = foot.substring(0, 53);
+    const int footMax = TFT_W / 6 - 2;
+    if ((int)foot.length() > footMax) foot = foot.substring(0, footMax);
     tft.print(foot);
 }
 
@@ -325,6 +340,7 @@ static void pollTouch(const Snapshot& s) {
     int x = clampInt(mapTouchX(p.x), 0, TFT_W - 1);
     int y = clampInt(mapTouchY(p.y), 0, TFT_H - 1);
     int hit = buttonHit(x, y);
+    Serial.printf("[TOUCH] raw=%d,%d -> %d,%d hit=%d\n", p.x, p.y, x, y, hit);
     if (hit >= 0) {
         lastTouchMs = millis();
         handleSelection(hit, s);
@@ -359,12 +375,18 @@ void setup() {
     Serial.begin(115200);
     pinMode(PIN_TFT_BL, OUTPUT);
     digitalWrite(PIN_TFT_BL, HIGH);
+    pinMode(27, OUTPUT);           // 3.5" boards drive the backlight from GPIO 27
+    digitalWrite(27, HIGH);
 
     tft.init();
     tft.setRotation(1);
+    TFT_W = tft.width();
+    TFT_H = tft.height();
     tft.fillScreen(TFT_BLACK);
+    Serial.printf("[TFT] %dx%d\n", TFT_W, TFT_H);
 
     touch.begin();
+    touch.setRotation(1);
     // Touch rotation and axis swap handled in mapTouchX/Y calibration constants
 
     // touch.begin() calls SPI.begin() internally, resetting pins to ESP32
@@ -380,6 +402,7 @@ void setup() {
         bootMessage = "SD init failed - fallback world";
     } else {
         Serial.println("[SD] OK");
+        sdMounted = true;
         loadGameContent();
     }
 
