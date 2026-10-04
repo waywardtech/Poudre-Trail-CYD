@@ -1,0 +1,7 @@
+locationId,label,foodDelta,ammoDelta,medicineDelta,tradeDelta,horseDelta,moraleDelta,healthDelta,repJanisDelta,repFridayDelta,repMasonDelta,resultText
+laporte,"Buy flour and bacon (+20 food, -1 trade goods)",20,0,0,-1,0,0,0,2,0,0,"Janis's store settles the household for another stretch."
+laporte,"Buy medicine (+1 medicine, -1 trade goods)",0,0,1,-1,0,0,0,1,0,0,"A practical purchase against a worsening road."
+virginia_dale,"Buy cartridges (+8 ammo, -1 trade goods)",0,8,0,-1,0,0,0,0,0,0,"Stage traffic always turns risk into a price."
+virginia_dale,"Buy coffee and dried meat (+12 food, -1 trade goods)",12,0,0,-1,0,1,0,0,0,0,"The camp feels almost cheerful for an hour."
+mason_claim,"Pay for horse feed (+10 horse, -1 trade goods)",0,0,0,-1,10,0,0,0,-1,2,"The horses recover. Mason's men remember the bargain."
+mason_claim,"Buy medicine (+1 medicine, -1 trade goods)",0,0,1,-1,0,0,0,0,-1,1,"A practical purchase. Mason does not offer charity."
