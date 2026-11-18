@@ -1,6 +1,8 @@
 #include "poudre_trail_engine.hpp"
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
+#include <iterator>
 #include <sstream>
 
 // ─── CSV helpers ─────────────────────────────────────────────────────────────
@@ -78,28 +80,39 @@ static int kvInt(const std::map<std::string,std::string>& kv, const std::string&
     auto it = kv.find(k);
     return it == kv.end() ? fb : csvInt(it->second, fb);
 }
+static std::vector<std::string> splitStr(const std::string& s, char sep) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (char ch : s) {
+        if (ch == sep) { out.push_back(trimStr(cur)); cur.clear(); }
+        else cur += ch;
+    }
+    out.push_back(trimStr(cur));
+    return out;
+}
 
-// CSV column layout for choices (13 columns each, starting at offset):
+// CSV column layout for choices (14 columns each, starting at offset):
 // 0:label 1:food 2:ammo 3:med 4:trade 5:horse 6:morale 7:health
-// 8:repJanis 9:repFriday 10:repMason 11:setFlag 12:result
-static const int CHOICE_COLS = 13;
+// 8:repJanis 9:repFriday 10:repMason 11:setFlag(s) 12:result 13:days
+static const int CHOICE_COLS = 14;
 
 static Choice parseChoice(const std::vector<std::string>& row, int off) {
     Choice c;
     if ((int)row.size() < off + CHOICE_COLS) return c;
-    c.label           = row[off+0];
-    c.foodDelta       = csvInt(row[off+1]);
-    c.ammunitionDelta = csvInt(row[off+2]);
-    c.medicineDelta   = csvInt(row[off+3]);
-    c.tradeGoodsDelta = csvInt(row[off+4]);
+    c.label               = row[off+0];
+    c.foodDelta           = csvInt(row[off+1]);
+    c.ammunitionDelta     = csvInt(row[off+2]);
+    c.medicineDelta       = csvInt(row[off+3]);
+    c.tradeGoodsDelta     = csvInt(row[off+4]);
     c.horseConditionDelta = csvInt(row[off+5]);
-    c.moraleDelta     = csvInt(row[off+6]);
-    c.healthDelta     = csvInt(row[off+7]);
-    c.repJanisDelta   = csvInt(row[off+8]);
-    c.repFridayDelta  = csvInt(row[off+9]);
-    c.repMasonDelta   = csvInt(row[off+10]);
-    c.setFlag         = row[off+11];
-    c.resultText      = row[off+12];
+    c.moraleDelta         = csvInt(row[off+6]);
+    c.healthDelta         = csvInt(row[off+7]);
+    c.repJanisDelta       = csvInt(row[off+8]);
+    c.repFridayDelta      = csvInt(row[off+9]);
+    c.repMasonDelta       = csvInt(row[off+10]);
+    c.setFlag             = row[off+11];
+    c.resultText          = row[off+12];
+    c.daysDelta           = csvInt(row[off+13]);
     return c;
 }
 
@@ -125,88 +138,121 @@ static TradeOffer parseTrade(const std::vector<std::string>& row) {
 
 // ─── Engine ──────────────────────────────────────────────────────────────────
 
-GameEngine::GameEngine() { buildFallbackWorld(); }
+static const int FOOD_PER_DAY      = 9;
+static const int TRAIL_EVENT_CHANCE = 55;   // percent per leg
+static const int HUNT_SUCCESS       = 70;   // percent
+static const int HUNT_AMMO          = 3;
+
+GameEngine::GameEngine() {
+    if (!loadEmbeddedWorld()) buildMinimalWorld();
+}
+
+void GameEngine::buildMinimalWorld() {
+    locations_.clear();
+    events_.clear();
+    trades_.clear();
+    route_.clear();
+    Location a; a.id = "start"; a.name = "Laporte"; a.summary = "No game data found."; a.mapX = 20; a.mapY = 50;
+    Location b; b.id = "end"; b.name = "Fort Collins"; b.summary = "Journey's end."; b.milesFromStart = 10; b.mapX = 80; b.mapY = 50;
+    locations_ = {a, b};
+    route_ = {"start", "end"};
+}
 
 bool GameEngine::loadFromText(const std::string& locCsv,
                                const std::string& evCsv,
                                const std::string& trCsv,
-                               const std::vector<std::pair<std::string,std::string>>& bodyFiles,
+                               const BodyReader& readBody,
                                std::string* err) {
     auto locRows = parseCsv(locCsv);
     auto evRows  = parseCsv(evCsv);
     auto trRows  = parseCsv(trCsv);
 
-    if (locRows.size() < 2 || evRows.size() < 2) {
+    if (locRows.size() < 3 || evRows.size() < 2) {
         if (err) *err = "CSV missing headers or data";
         return false;
     }
+    if (evRows[0].size() < 7 + (size_t)CHOICE_COLS) {
+        if (err) *err = "events.csv is an older format";
+        return false;
+    }
 
-    locations_.clear();
-    events_.clear();
-    trades_.clear();
-    locationNames_.clear();
-    route_.clear();
-    bodyFiles_ = bodyFiles;
+    std::vector<Location> locs;
+    std::vector<Event> evs;
+    std::map<std::string, std::vector<TradeOffer>> trades;
 
-    // Locations (header row 0, data from row 1)
-    // id,name,summary,milesFromStart,hasTradingPost,image
+    // locations: id,name,summary,milesFromStart,hasTradingPost,image[,mapX,mapY]
     for (size_t i = 1; i < locRows.size(); ++i) {
         const auto& r = locRows[i];
         if (r.size() < 6) continue;
         Location loc;
-        loc.id            = r[0];
-        loc.name          = r[1];
-        loc.summary       = r[2];
-        loc.milesFromStart= csvInt(r[3]);
-        loc.hasTradingPost= csvBool(r[4]);
-        loc.image         = r[5];
-        locations_.push_back(loc);
-        locationNames_[loc.id] = loc.name;
-        route_.push_back(loc.id);
+        loc.id             = r[0];
+        loc.name           = r[1];
+        loc.summary        = r[2];
+        loc.milesFromStart = csvInt(r[3]);
+        loc.hasTradingPost = csvBool(r[4]);
+        loc.image          = r[5];
+        if (r.size() >= 8) { loc.mapX = csvInt(r[6], 50); loc.mapY = csvInt(r[7], 50); }
+        locs.push_back(loc);
     }
 
-    // Events: id,locationId,title,bodyFile,image,kind,requiresFlag,
-    //         c1(13 cols), c2(13 cols), c3(13 cols)
+    // events: id,locationId,title,bodyFile,image,kind,requiresFlag, then 14-column choices
     for (size_t i = 1; i < evRows.size(); ++i) {
         const auto& r = evRows[i];
         if (r.size() < 7) continue;
         Event ev;
-        ev.id          = r[0];
-        ev.locationId  = r[1];
-        ev.title       = r[2];
-        ev.bodyFile    = r[3];
-        ev.imagePath   = r[4];
-        // r[5] = kind (ignored at runtime, used for editor filtering)
-        ev.requiresFlag= r[6];
+        ev.id           = r[0];
+        ev.locationId   = r[1];
+        ev.title        = r[2];
+        ev.bodyFile     = r[3];
+        ev.imagePath    = r[4];
+        ev.kind         = r[5].empty() ? "story" : lowerStr(r[5]);
+        ev.requiresFlag = r[6];
+        if (ev.kind.compare(0, 6, "timed:") == 0) ev.minDay = csvInt(ev.kind.substr(6), 0);
         for (int off = 7; off + CHOICE_COLS <= (int)r.size(); off += CHOICE_COLS) {
             Choice c = parseChoice(r, off);
             if (!trimStr(c.label).empty()) ev.choices.push_back(c);
         }
-        ev.body = bodyTextFor(ev.bodyFile);
+        if (ev.choices.empty()) continue;
+        if (readBody) ev.body = trimStr(readBody(ev.bodyFile));
         if (ev.body.empty()) ev.body = ev.title;
-        events_.push_back(ev);
+        evs.push_back(ev);
     }
 
-    // Trades
     for (size_t i = 1; i < trRows.size(); ++i) {
         TradeOffer t = parseTrade(trRows[i]);
-        if (!trimStr(t.label).empty())
-            trades_[t.locationId].push_back(t);
+        if (!trimStr(t.label).empty()) trades[t.locationId].push_back(t);
     }
 
-    if (locations_.empty() || events_.empty()) {
+    if (locs.size() < 2 || evs.empty()) {
         if (err) *err = "No usable locations or events after parse";
-        buildFallbackWorld();
         return false;
     }
+
+    locations_ = locs;
+    events_    = evs;
+    trades_    = trades;
+    route_.clear();
+    for (const auto& l : locations_) route_.push_back(l.id);
+    routeIndex_ = 0;
+    mode_ = GameMode::TITLE;
+    currentEvent_ = nullptr;
+    pending_.clear();
     return true;
 }
 
-std::string GameEngine::bodyTextFor(const std::string& bodyFile) const {
-    for (const auto& p : bodyFiles_)
-        if (p.first == bodyFile) return p.second;
-    return {};
+#if __has_include("world_data.hpp")
+#include "world_data.hpp"
+bool GameEngine::loadEmbeddedWorld() {
+    auto reader = [](const std::string& path) -> std::string {
+        for (const WorldBody& b : WORLD_BODIES)
+            if (path == b.path) return b.text;
+        return std::string();
+    };
+    return loadFromText(WORLD_LOCATIONS_CSV, WORLD_EVENTS_CSV, WORLD_TRADES_CSV, reader);
 }
+#else
+bool GameEngine::loadEmbeddedWorld() { return false; }
+#endif
 
 const Location* GameEngine::findLocation(const std::string& id) const {
     for (const auto& loc : locations_)
@@ -214,236 +260,248 @@ const Location* GameEngine::findLocation(const std::string& id) const {
     return nullptr;
 }
 
-static Location makeLocation(const std::string& id, const std::string& name,
-                              const std::string& summary, int miles, bool trade,
-                              const std::string& img) {
-    Location l; l.id=id; l.name=name; l.summary=summary;
-    l.milesFromStart=miles; l.hasTradingPost=trade; l.image=img; return l;
-}
-static Choice makeChoice(const std::string& lbl, const std::string& res,
-                          int food, int ammo, int med, int trd, int horse, int mor, int hp,
-                          int rj, int rf, int rm, const std::string& flag) {
-    Choice c; c.label=lbl; c.resultText=res;
-    c.foodDelta=food; c.ammunitionDelta=ammo; c.medicineDelta=med;
-    c.tradeGoodsDelta=trd; c.horseConditionDelta=horse; c.moraleDelta=mor; c.healthDelta=hp;
-    c.repJanisDelta=rj; c.repFridayDelta=rf; c.repMasonDelta=rm; c.setFlag=flag; return c;
-}
-static TradeOffer makeTrade(const std::string& loc, const std::string& lbl,
-                             int food, int ammo, int med, int trd, int horse, int mor, int hp,
-                             int rj, int rf, int rm, const std::string& res) {
-    TradeOffer t; t.locationId=loc; t.label=lbl;
-    t.foodDelta=food; t.ammunitionDelta=ammo; t.medicineDelta=med;
-    t.tradeGoodsDelta=trd; t.horseDelta=horse; t.moraleDelta=mor; t.healthDelta=hp;
-    t.repJanisDelta=rj; t.repFridayDelta=rf; t.repMasonDelta=rm; t.resultText=res; return t;
+const Event* GameEngine::findEvent(const std::string& id) const {
+    for (const auto& ev : events_)
+        if (ev.id == id) return &ev;
+    return nullptr;
 }
 
-void GameEngine::buildFallbackWorld() {
-    locations_.clear();
-    locations_.push_back(makeLocation("laporte",      "Laporte",      "Janis's settlement at the door of the valley.", 0,  true,  "art/laporte.bmp"));
-    locations_.push_back(makeLocation("council_tree", "Council Tree", "A place of gathering, memory, and warning.",    8,  false, "art/council_tree.bmp"));
-    locations_.push_back(makeLocation("virginia_dale","Virginia Dale","The home station between the mountain and the plain.", 18, true, "art/stage_road.bmp"));
-    locations_.push_back(makeLocation("mason_claim",  "Mason's Claim","Downstream ambition hardening into institutions.", 30, true,  "art/mason_claim.bmp"));
-    locations_.push_back(makeLocation("fort_collins", "Fort Collins", "The new order gathers on higher ground.",        42, false, "art/fort_collins.bmp"));
+bool GameEngine::hasFlag(const std::string& f) const { return flags_.count(f) > 0; }
 
-    locationNames_.clear();
-    route_.clear();
-    for (const auto& loc : locations_) {
-        locationNames_[loc.id] = loc.name;
-        route_.push_back(loc.id);
+// "a&!b&c|d": AND of groups; a group is an OR of atoms; an atom may start with '!'.
+bool GameEngine::flagExpr(const std::string& expr) const {
+    if (trimStr(expr).empty()) return true;
+    for (const std::string& group : splitStr(expr, '&')) {
+        if (group.empty()) continue;
+        bool any = false;
+        for (std::string atom : splitStr(group, '|')) {
+            bool neg = !atom.empty() && atom[0] == '!';
+            if (neg) atom = trimStr(atom.substr(1));
+            if (hasFlag(atom) != neg) { any = true; break; }
+        }
+        if (!any) return false;
     }
+    return true;
+}
 
-    events_.clear();
-    trades_.clear();
-    flags_.clear();
+bool GameEngine::eventEligible(const Event& ev) const {
+    return flagExpr(ev.requiresFlag);
+}
 
-    Event janis;
-    janis.id = "janis_store"; janis.locationId = "laporte";
-    janis.title = "Janis at the Store";
-    janis.imagePath = "art/janis.bmp";
-    janis.body = "The store smells of harness leather, coffee, wet wool, flour dust, and river mud. Antoine Janis speaks like a man who knows this valley had owners, obligations, and names before the stage line decided it mattered.";
-    janis.choices.push_back(makeChoice("Buy flour and hear the safer road",
-        "Janis marks the line that holds when the river rises. Your household leaves better supplied.",
-        +10,0,0,-1,0,0,0, +4,0,0, "met_janis"));
-    janis.choices.push_back(makeChoice("Ask what the valley asks of travelers",
-        "He answers carefully. What you gain is not a shortcut but a standard.",
-        0,0,0,0,0,+3,0, +2,+1,0, "met_janis"));
-    events_.push_back(janis);
+uint32_t GameEngine::nextRand() {
+    rng_ ^= rng_ << 13;
+    rng_ ^= rng_ >> 17;
+    rng_ ^= rng_ << 5;
+    return rng_;
+}
 
-    Event friday;
-    friday.id = "friday_counsel"; friday.locationId = "council_tree";
-    friday.title = "Chief Friday's Counsel";
-    friday.imagePath = "art/chief_friday.bmp";
-    friday.body = "Friday does not offer folklore. He offers calibration: how to move without mistaking speed for wisdom, how to hear warning before it becomes consequence, how to remain visible without becoming reckless.";
-    friday.choices.push_back(makeChoice("Listen and slow your pace",
-        "You leave with sharper eyes and a quieter mind.",
-        0,0,0,0,0,+4,0, 0,+5,0, "heard_friday"));
-    friday.choices.push_back(makeChoice("Offer tobacco and exchange news",
-        "Respect offered carefully and received in kind.",
-        0,0,0,-1,0,+2,0, +2,+3,0, "heard_friday"));
-    friday.choices.push_back(makeChoice("Press on with the stage timetable",
-        "You keep to the company clock. It is not the only clock in this country.",
-        0,0,0,0,0,-2,0, 0,-3,+1, ""));
-    events_.push_back(friday);
-
-    Event virginia;
-    virginia.id = "virginia_dale_station"; virginia.locationId = "virginia_dale";
-    virginia.title = "Virginia at the Home Station";
-    virginia.imagePath = "art/stage_road.bmp";
-    virginia.body = "At Virginia Dale the station runs on labor, memory, and nerves held in check. Virginia Slade has no interest in mythmaking.";
-    virginia.choices.push_back(makeChoice("Offer help with the horses",
-        "She accepts the labor. The station remembers useful hands.",
-        0,0,0,0,+4,+2,0, 0,+1,0, "helped_virginia"));
-    virginia.choices.push_back(makeChoice("Ask after Jack Slade's latest ride",
-        "Her look tells you the question is cheaper than the answer.",
-        0,0,0,0,0,-2,0, 0,0,0, ""));
-    events_.push_back(virginia);
-
-    Event mason;
-    mason.id = "mason_reveal"; mason.locationId = "mason_claim";
-    mason.title = "Mason Makes His Choice";
-    mason.imagePath = "art/mason_claim.bmp";
-    mason.body = "Mason knows exactly what Laporte is and exactly what is replacing it. He does not need to hate the older order to leave it behind.";
-    mason.choices.push_back(makeChoice("Trade with him anyway",
-        "You gain provisions by stepping closer to the new order. It pays promptly.",
-        +8,0,0,-1,0,0,0, 0,-1,+5, "traded_with_mason"));
-    mason.choices.push_back(makeChoice("Keep your distance",
-        "You leave poorer in goods and clearer in mind.",
-        -4,0,0,0,0,+1,0, 0,+1,-3, ""));
-    events_.push_back(mason);
-
-    trades_["laporte"].push_back(makeTrade("laporte", "Janis's sack flour (+10 food)", +10,0,0,-1,0,0,0, +2,0,0, "Your packs are heavier, but your household is steadier."));
-    trades_["virginia_dale"].push_back(makeTrade("virginia_dale", "Buy cartridges (+8 ammo)", 0,+8,0,-1,0,0,0, 0,0,0, "Stage traffic always turns risk into a price."));
-    trades_["mason_claim"].push_back(makeTrade("mason_claim", "Mason's horse feed (+8 horse)", 0,0,0,-1,+8,0,0, 0,-1,+2, "The horses recover. Mason's men remember the bargain."));
-
-    footer_ = "Tap to begin.";
+std::string GameEngine::dateLabel() const {
+    static const char* months[] = {"May", "Jun", "Jul", "Aug", "Sep", "Oct"};
+    static const int   mdays[]  = {31, 30, 31, 31, 30, 31};
+    int d = 12 + (day_ - 1);   // Day 1 = May 12, 1864
+    int m = 0;
+    while (m < 5 && d > mdays[m]) { d -= mdays[m]; ++m; }
+    return std::string(months[m]) + " " + std::to_string(d) + ", 1864";
 }
 
 void GameEngine::startGame() {
     resources_ = Resources{};
     flags_.clear();
+    seen_.clear();
+    pending_.clear();
     routeIndex_ = 0;
     day_ = 1;
-    travelCount_ = 0;
     currentEvent_ = nullptr;
     currentTrades_.clear();
-    footer_ = "La Porte, 1861.";
-    // Janis event fires immediately at start
-    mode_ = GameMode::EVENT;
-    queueEventForCurrentStop();
+    resultText_.clear();
+    gameOverReason_.clear();
+    endingTitle_.clear();
+    endingBody_.clear();
+    footer_ = "Laporte, May 1864.";
+    mode_ = GameMode::TRAVEL;
+    arriveAtStop(false);
 }
 
-const Event* GameEngine::findEligibleEventForLocation(const std::string& locId) const {
-    for (const auto& ev : events_) {
-        if (ev.locationId != locId) continue;
-        if (!ev.requiresFlag.empty()) {
-            auto it = flags_.find(ev.requiresFlag);
-            if (it == flags_.end() || !it->second) continue;
-        }
-        if (resources_.repJanis  < ev.minRepJanis)  continue;
-        if (resources_.repFriday < ev.minRepFriday)  continue;
-        if (resources_.repMason  < ev.minRepMason)   continue;
-        return &ev;
+void GameEngine::arriveAtStop(bool rollTrailEvent) {
+    pending_.clear();
+    currentEvent_ = nullptr;
+    const bool last = routeIndex_ + 1 == route_.size();
+
+    if (rollTrailEvent && !last && (int)(nextRand() % 100) < TRAIL_EVENT_CHANCE) {
+        std::vector<const Event*> pool;
+        for (const auto& ev : events_)
+            if (ev.kind == "trail" && !seen_.count(ev.id) && eventEligible(ev)) pool.push_back(&ev);
+        if (!pool.empty()) pending_.push_back(pool[nextRand() % pool.size()]->id);
     }
-    return nullptr;
+    for (const auto& ev : events_)
+        if (ev.minDay > 0 && day_ >= ev.minDay && !seen_.count(ev.id)) pending_.push_back(ev.id);
+    for (const auto& ev : events_)
+        if (ev.minDay == 0 && ev.kind != "trail" && ev.locationId == route_[routeIndex_] && !seen_.count(ev.id))
+            pending_.push_back(ev.id);
+
+    advanceQueue();
 }
 
-void GameEngine::queueEventForCurrentStop() {
-    const std::string& loc = route_[routeIndex_];
-    currentEvent_ = findEligibleEventForLocation(loc);
-    if (currentEvent_) {
+void GameEngine::advanceQueue() {
+    while (!pending_.empty()) {
+        std::string id = pending_.front();
+        pending_.pop_front();
+        const Event* ev = findEvent(id);
+        if (!ev || seen_.count(id) || !eventEligible(*ev)) continue;   // flags may have changed
+        currentEvent_ = ev;
         mode_ = GameMode::EVENT;
         footer_ = "An encounter unfolds.";
-    } else if (mode_ != GameMode::VICTORY && mode_ != GameMode::GAME_OVER) {
-        mode_ = GameMode::TRAVEL;
-        footer_ = "No encounter here.";
+        return;
     }
+    currentEvent_ = nullptr;
+    if (routeIndex_ + 1 == route_.size()) { finishJourney(); return; }
+    mode_ = GameMode::TRAVEL;
+    footer_ = "Where next?";
 }
 
-// travel() advances one step along the route; safe to call from TRAVEL mode button.
+void GameEngine::advanceDays(int n) {
+    if (n <= 0) return;
+    day_ += n;
+    resources_.food -= FOOD_PER_DAY * n;
+    if (resources_.food < 25) resources_.health -= 3 * n;   // hunger wears people down
+}
+
 void GameEngine::travel() {
     if (mode_ != GameMode::TRAVEL) return;
-    if (routeIndex_ + 1 < route_.size())
-        travelTo(route_[routeIndex_ + 1]);
+    if (routeIndex_ + 1 < route_.size()) travelTo(route_[routeIndex_ + 1]);
 }
 
-// travelTo: no-op in VICTORY or GAME_OVER (mode guard from repfix).
-// Food drain: -12 (increased from art_save's -8; see changelog).
 void GameEngine::travelTo(const std::string& nextLocId) {
     if (mode_ == GameMode::VICTORY || mode_ == GameMode::GAME_OVER) return;
     auto it = std::find(route_.begin(), route_.end(), nextLocId);
     if (it == route_.end()) return;
 
-    routeIndex_ = (size_t)std::distance(route_.begin(), it);
-    day_ += 3;
-    ++travelCount_;
-    resources_.food          -= 12;
-    resources_.horseCondition -= 6;
-    resources_.morale        -= 1;
+    size_t idx = (size_t)std::distance(route_.begin(), it);
+    int miles = std::abs(locations_[idx].milesFromStart - locations_[routeIndex_].milesFromStart);
+    int days  = std::max(1, (miles + 4) / 5);
+
+    advanceDays(days);
+    resources_.horseCondition -= 2 * days;
+    resources_.morale         -= 1;
     clampResources();
     if (mode_ == GameMode::GAME_OVER) return;
 
-    if (routeIndex_ == route_.size() - 1) {
-        mode_ = GameMode::VICTORY;
-        footer_ = flags_["moral_contradiction"]
-            ? "You reached Fort Collins carrying provisions, memory, and contradiction. Survival did not keep your hands entirely clean."
-            : "You reached Fort Collins, but the valley's balance has shifted around you.";
-        return;
-    }
+    routeIndex_ = idx;
+    arriveAtStop(true);
+}
 
-    queueEventForCurrentStop();
+void GameEngine::applyDeltas(int food, int ammo, int med, int trade, int horse, int morale,
+                             int health, int rj, int rf, int rm) {
+    resources_.food           += food;
+    resources_.ammunition     += ammo;
+    resources_.medicine       += med;
+    resources_.tradeGoods     += trade;
+    resources_.horseCondition += horse;
+    resources_.morale         += morale;
+    resources_.health         += health;
+    resources_.repJanis       += rj;
+    resources_.repFriday      += rf;
+    resources_.repMason       += rm;
+}
+
+std::string GameEngine::deltaSummary(const Resources& b) const {
+    std::string out;
+    auto add = [&](const char* name, int before, int after) {
+        if (before == after) return;
+        if (!out.empty()) out += ", ";
+        out += name;
+        out += (after > before ? " +" : " -");
+        out += std::to_string(std::abs(after - before));
+    };
+    add("Food", b.food, resources_.food);
+    add("Ammo", b.ammunition, resources_.ammunition);
+    add("Medicine", b.medicine, resources_.medicine);
+    add("Trade goods", b.tradeGoods, resources_.tradeGoods);
+    add("Horses", b.horseCondition, resources_.horseCondition);
+    add("Morale", b.morale, resources_.morale);
+    add("Health", b.health, resources_.health);
+    return out;
 }
 
 void GameEngine::chooseOption(int index) {
     if (mode_ == GameMode::EVENT) {
         if (!currentEvent_ || index < 0 || (size_t)index >= currentEvent_->choices.size()) return;
         const Choice& c = currentEvent_->choices[index];
-        resources_.food          += c.foodDelta;
-        resources_.ammunition    += c.ammunitionDelta;
-        resources_.medicine      += c.medicineDelta;
-        resources_.tradeGoods    += c.tradeGoodsDelta;
-        resources_.horseCondition+= c.horseConditionDelta;
-        resources_.morale        += c.moraleDelta;
-        resources_.health        += c.healthDelta;
-        resources_.repJanis      += c.repJanisDelta;
-        resources_.repFriday     += c.repFridayDelta;
-        resources_.repMason      += c.repMasonDelta;
-        if (!c.setFlag.empty()) flags_[c.setFlag] = true;
-        footer_ = c.resultText.empty() ? "Choose your next move." : c.resultText;
+        Resources before = resources_;
+        applyDeltas(c.foodDelta, c.ammunitionDelta, c.medicineDelta, c.tradeGoodsDelta,
+                    c.horseConditionDelta, c.moraleDelta, c.healthDelta,
+                    c.repJanisDelta, c.repFridayDelta, c.repMasonDelta);
+        advanceDays(c.daysDelta);
+        for (const std::string& f : splitStr(c.setFlag, ','))
+            if (!f.empty()) flags_.insert(f);
+        seen_.insert(currentEvent_->id);
+        resultTitle_ = currentEvent_->title;
+        resultImage_ = currentEvent_->imagePath;
         currentEvent_ = nullptr;
         clampResources();
         evaluateReputation();
-        if (mode_ != GameMode::GAME_OVER) mode_ = GameMode::TRAVEL;
+        resultText_ = c.resultText.empty() ? "The road goes on." : c.resultText;
+        std::string d = deltaSummary(before);
+        if (!d.empty()) resultText_ += "\n" + d;
+        if (mode_ != GameMode::GAME_OVER) { mode_ = GameMode::RESULT; footer_ = "Tap Continue."; }
+    } else if (mode_ == GameMode::RESULT) {
+        advanceQueue();
     } else if (mode_ == GameMode::TRADE) {
         if (index < 0 || (size_t)index >= currentTrades_.size()) {
-            // "Leave" button
             footer_ = "You leave the trading post.";
             mode_ = GameMode::TRAVEL;
             return;
         }
         const TradeOffer& t = currentTrades_[index];
-        resources_.food          += t.foodDelta;
-        resources_.ammunition    += t.ammunitionDelta;
-        resources_.medicine      += t.medicineDelta;
-        resources_.tradeGoods    += t.tradeGoodsDelta;
-        resources_.horseCondition+= t.horseDelta;
-        resources_.morale        += t.moraleDelta;
-        resources_.health        += t.healthDelta;
-        resources_.repJanis      += t.repJanisDelta;
-        resources_.repFriday     += t.repFridayDelta;
-        resources_.repMason      += t.repMasonDelta;
+        if (resources_.tradeGoods + t.tradeGoodsDelta < 0) {
+            footer_ = "Not enough trade goods.";
+            return;
+        }
+        applyDeltas(t.foodDelta, t.ammunitionDelta, t.medicineDelta, t.tradeGoodsDelta,
+                    t.horseDelta, t.moraleDelta, t.healthDelta,
+                    t.repJanisDelta, t.repFridayDelta, t.repMasonDelta);
         footer_ = t.resultText.empty() ? "Trade completed." : t.resultText;
         clampResources();
         evaluateReputation();
-        if (mode_ != GameMode::GAME_OVER) mode_ = GameMode::TRAVEL;
+        // stay at the post so several trades can be made; "Leave" returns to the road
+    } else if (mode_ == GameMode::CAMP) {
+        Resources before = resources_;
+        if (index == 0) {                                  // rest
+            advanceDays(1);
+            applyDeltas(0, 0, 0, 0, +8, +3, +8, 0, 0, 0);
+            resultText_ = "A day of rest. The horses graze, the wagon gets mended, and nobody has to be anywhere.";
+        } else if (index == 1) {                           // hunt
+            if (resources_.ammunition < HUNT_AMMO) { footer_ = "Not enough ammunition."; return; }
+            advanceDays(1);
+            resources_.ammunition -= HUNT_AMMO;
+            if ((int)(nextRand() % 100) < HUNT_SUCCESS) {
+                resources_.food += 16; resources_.morale += 2;
+                resultText_ = "Quiet work and a steady hand. You carry meat back to camp.";
+            } else {
+                resources_.food += 3; resources_.morale -= 2;
+                resultText_ = "The game kept its distance all day. You return with little but sore feet.";
+            }
+        } else if (index == 3) {
+            closeCamp();
+            return;
+        } else {
+            return;
+        }
+        resultTitle_ = "Camp";
+        resultImage_ = "art/night_camp.gif";
+        clampResources();
+        std::string d = deltaSummary(before);
+        if (!d.empty()) resultText_ += "\n" + d;
+        if (mode_ != GameMode::GAME_OVER) { mode_ = GameMode::RESULT; footer_ = "Tap Continue."; }
     }
 }
 
 void GameEngine::openTrade() {
+    if (mode_ != GameMode::TRAVEL) return;
     currentTrades_.clear();
     auto it = trades_.find(route_[routeIndex_]);
     if (it == trades_.end() || it->second.empty()) {
-        footer_ = "No trade here.";
-        mode_ = GameMode::TRAVEL;
+        footer_ = "No trading post here.";
         return;
     }
     currentTrades_ = it->second;
@@ -451,10 +509,19 @@ void GameEngine::openTrade() {
     footer_ = "Choose a trade.";
 }
 
-// moral_contradiction: repMason >= 5 AND repFriday >= 5 (lowered threshold from earlier builds)
+void GameEngine::openCamp() {
+    if (mode_ != GameMode::TRAVEL) return;
+    mode_ = GameMode::CAMP;
+    footer_ = "Camp.";
+}
+
+void GameEngine::closeCamp() {
+    if (mode_ == GameMode::CAMP) { mode_ = GameMode::TRAVEL; footer_ = "Where next?"; }
+}
+
 void GameEngine::evaluateReputation() {
     if (resources_.repMason >= 5 && resources_.repFriday >= 5)
-        flags_["moral_contradiction"] = true;
+        flags_.insert("moral_contradiction");
 }
 
 void GameEngine::clampResources() {
@@ -465,8 +532,15 @@ void GameEngine::clampResources() {
     resources_.horseCondition= std::max(0, std::min(100, resources_.horseCondition));
     resources_.morale        = std::max(0, std::min(100, resources_.morale));
     resources_.health        = std::max(0, std::min(100, resources_.health));
-    if (resources_.food == 0 || resources_.health == 0) {
+    if (mode_ == GameMode::GAME_OVER || mode_ == GameMode::VICTORY) return;
+    const char* why = nullptr;
+    if      (resources_.food == 0)           why = "The food ran out miles from anyone who could spare more. Your household can go no farther.";
+    else if (resources_.health == 0)         why = "Sickness and exhaustion finished what the road started. Your household can go no farther.";
+    else if (resources_.horseCondition == 0) why = "The horses gave out on the road. Without them the wagon, and the journey, ends here.";
+    else if (resources_.morale == 0)         why = "Nobody has the heart for another mile. Your household turns back toward Laporte.";
+    if (why) {
         mode_ = GameMode::GAME_OVER;
+        gameOverReason_ = why;
         footer_ = "Your household can go no farther.";
     }
 }
@@ -486,18 +560,63 @@ std::string GameEngine::repLabel(int v, const std::string& npc) const {
     return "Closed";
 }
 
+void GameEngine::finishJourney() {
+    mode_ = GameMode::VICTORY;
+    std::string t, b;
+
+    if (hasFlag("map_true")) {
+        t = "A Map With Names";
+        b = "Ames wrote the river's names into the margin and credited the people who gave them. It is a smaller victory than it sounds, and a real one.";
+    } else if (hasFlag("map_mason")) {
+        t = "Mason's Line";
+        b = "Mason's survey became the map. It is tidy and confident and wrong in the ways that matter, and it will be quoted for a hundred years.";
+    } else if (hasFlag("map_partial")) {
+        t = "A Partial Map";
+        b = "Some names fit on the paper and most stayed with the people who knew them. Maps are always incomplete; this one knows it.";
+    } else if (hasFlag("map_blank")) {
+        t = "The Blank Places";
+        b = "You left the blanks blank. Whether that protected the names or erased them, no one will know for years.";
+    } else {
+        t = "Arrival";
+        b = "You reached Fort Collins with your household and your own opinion of the road.";
+    }
+
+    if (hasFlag("moral_contradiction"))
+        b += " You carried both ledgers: Mason's papers and Friday's trust. Survival did not keep your hands entirely clean.";
+    else if (resources_.repFriday >= 5)
+        b += " Friday's people will remember that you asked before you walked.";
+    else if (resources_.repMason >= 5)
+        b += " Mason's paper already carries your name.";
+    if (hasFlag("helped_flood"))
+        b += " The people you pulled from the bank at the flood have not forgotten it.";
+    if (hasFlag("sold_point"))
+        b += " The stone point went to a collector in Denver. You think of it more than you expected.";
+    else if (hasFlag("left_point"))
+        b += " The stone point still lies in its gravel, edge up, waiting for rain.";
+    if (hasFlag("carries_letter"))
+        b += " Virginia's letter is still in your coat. You will post it.";
+
+    b += " History: the May flood took Camp Collins from Laporte; in August the army raised Fort Collins here. In November, at Sand Creek, soldiers killed more than a hundred Cheyenne and Arapaho, mostly women and children. The old names survive in the people who kept them.";
+
+    endingTitle_ = t;
+    endingBody_  = b;
+    footer_ = "Journey complete.";
+}
+
 Snapshot GameEngine::snapshot() const {
     Snapshot s;
     s.mode = mode_;
     s.resources = resources_;
     s.day = day_;
+    s.dateLabel = dateLabel();
+    s.locationCount = (int)route_.size();
 
     if (!route_.empty()) {
+        s.locationIndex = (int)routeIndex_;
         s.locationId = route_[routeIndex_];
-        auto nm = locationNames_.find(s.locationId);
-        s.locationName = (nm != locationNames_.end()) ? nm->second : s.locationId;
         const Location* loc = findLocation(s.locationId);
         if (loc) {
+            s.locationName = loc->name;
             s.locationSummary = loc->summary;
             s.imagePath = loc->image;
         }
@@ -508,52 +627,63 @@ Snapshot GameEngine::snapshot() const {
     s.reputationSummaryFriday = repLabel(resources_.repFriday, "Friday");
     s.reputationSummaryMason  = repLabel(resources_.repMason,  "Mason");
 
-    if (mode_ == GameMode::TITLE) {
+    switch (mode_) {
+    case GameMode::TITLE:
         s.headline = "Poudre Trail";
-        s.body = "Travel the Cache la Poudre valley, 1861. Trade carefully, choose wisely.";
+        s.body = "Cache la Poudre valley, May 1864. The river is rising, the army is coming, and every map is a promise to someone. Who draws it when the water falls?";
+        s.imagePath = "art/title.gif";
         s.optionLabels = {"Start Journey", "Load Save"};
-        return s;
-    }
-
-    if (mode_ == GameMode::TRAVEL) {
+        break;
+    case GameMode::TRAVEL:
         s.headline = s.locationName;
         s.body = s.locationSummary;
-        s.optionLabels = {"Travel onward", "Trade / barter", "Save game", "Load game"};
-        return s;
-    }
-
-    if (mode_ == GameMode::EVENT && currentEvent_) {
-        s.headline = currentEvent_->title;
-        s.body = currentEvent_->body;
-        if (!currentEvent_->imagePath.empty()) s.imagePath = currentEvent_->imagePath;
-        for (const auto& c : currentEvent_->choices) s.optionLabels.push_back(c.label);
-        return s;
-    }
-
-    if (mode_ == GameMode::TRADE) {
+        s.optionLabels = {"Travel onward", "Trade / barter", "Camp: rest or hunt", "Save game"};
+        break;
+    case GameMode::CAMP:
+        s.headline = "Camp";
+        s.body = "Resting restores health, horses and spirits, but costs a day of food. Hunting costs 3 ammunition and a day, and may find game.";
+        s.imagePath = "art/night_camp.gif";
+        s.optionLabels = {"Rest a day", "Hunt (3 ammo)", "Load saved game", "Back"};
+        break;
+    case GameMode::EVENT:
+        if (currentEvent_) {
+            s.headline = currentEvent_->title;
+            s.body = currentEvent_->body;
+            if (!currentEvent_->imagePath.empty()) s.imagePath = currentEvent_->imagePath;
+            for (const auto& c : currentEvent_->choices) s.optionLabels.push_back(c.label);
+        }
+        break;
+    case GameMode::RESULT:
+        s.headline = resultTitle_;
+        s.body = resultText_;
+        if (!resultImage_.empty()) s.imagePath = resultImage_;
+        s.optionLabels = {"Continue"};
+        break;
+    case GameMode::TRADE:
         s.headline = "Trading Post";
         s.body = "Supplies and favors are priced differently in each place. Spend carefully.";
         for (const auto& t : currentTrades_) s.optionLabels.push_back(t.label);
         s.optionLabels.push_back("Leave trading post");
-        return s;
-    }
-
-    if (mode_ == GameMode::GAME_OVER) {
+        break;
+    case GameMode::GAME_OVER:
         s.headline = "Journey Lost";
-        s.body = "Food or health failed before the road was done.";
+        s.body = gameOverReason_;
+        s.imagePath = "art/night_camp.gif";
         s.optionLabels = {"Restart", "Load Save"};
-        return s;
+        break;
+    case GameMode::VICTORY:
+        s.headline = endingTitle_;
+        s.body = endingBody_;
+        s.imagePath = "art/fort_collins.gif";
+        s.optionLabels = {"Restart", "Load Save"};
+        break;
     }
-
-    // VICTORY
-    s.headline = "Fort Collins";
-    s.body = footer_;
-    s.optionLabels = {"Restart", "Load Save"};
     return s;
 }
 
 std::string GameEngine::serializeSave() const {
     std::ostringstream o;
+    o << "ver=2\n";
     o << "food="           << resources_.food          << "\n";
     o << "ammunition="     << resources_.ammunition    << "\n";
     o << "medicine="       << resources_.medicine      << "\n";
@@ -566,7 +696,12 @@ std::string GameEngine::serializeSave() const {
     o << "repMason="       << resources_.repMason      << "\n";
     o << "routeIndex="     << routeIndex_              << "\n";
     o << "day="            << day_                     << "\n";
-    o << "flag_moral_contradiction=" << (flags_.count("moral_contradiction") && flags_.at("moral_contradiction") ? 1 : 0) << "\n";
+    o << "rng="            << rng_                     << "\n";
+    o << "flags=";
+    { bool first = true; for (const auto& f : flags_) { o << (first ? "" : ",") << f; first = false; } }
+    o << "\nseen=";
+    { bool first = true; for (const auto& e : seen_)  { o << (first ? "" : ",") << e; first = false; } }
+    o << "\n";
     return o.str();
 }
 
@@ -577,9 +712,9 @@ bool GameEngine::loadSaveText(const std::string& text, std::string* err) {
         return false;
     }
 
-    resources_.food          = kvInt(kv, "food",          120);
-    resources_.ammunition    = kvInt(kv, "ammunition",    30);
-    resources_.medicine      = kvInt(kv, "medicine",      3);
+    resources_.food          = kvInt(kv, "food",          100);
+    resources_.ammunition    = kvInt(kv, "ammunition",    20);
+    resources_.medicine      = kvInt(kv, "medicine",      2);
     resources_.health        = kvInt(kv, "health",        85);
     resources_.morale        = kvInt(kv, "morale",        70);
     resources_.horseCondition= kvInt(kv, "horseCondition",100);
@@ -587,21 +722,26 @@ bool GameEngine::loadSaveText(const std::string& text, std::string* err) {
     resources_.repJanis      = kvInt(kv, "repJanis",      0);
     resources_.repFriday     = kvInt(kv, "repFriday",     0);
     resources_.repMason      = kvInt(kv, "repMason",      0);
-    day_                     = kvInt(kv, "day",           1);
+    day_                     = std::max(1, kvInt(kv, "day", 1));
+    uint32_t r = (uint32_t)std::strtoul(kv.count("rng") ? kv["rng"].c_str() : "0", nullptr, 10);
+    rng_ = r ? r : rng_;
 
-    flags_["moral_contradiction"] = kvInt(kv, "flag_moral_contradiction", 0) != 0;
+    flags_.clear();
+    seen_.clear();
+    if (kv.count("flags"))
+        for (const std::string& f : splitStr(kv["flags"], ',')) if (!f.empty()) flags_.insert(f);
+    if (kv.count("seen"))
+        for (const std::string& e : splitStr(kv["seen"], ',')) if (!e.empty()) seen_.insert(e);
+    if (kvInt(kv, "flag_moral_contradiction", 0) != 0) flags_.insert("moral_contradiction");
 
     int ri = kvInt(kv, "routeIndex", 0);
     routeIndex_ = (ri >= 0 && (size_t)ri < route_.size()) ? (size_t)ri : 0;
 
-    if (routeIndex_ == route_.size() - 1) {
-        mode_ = GameMode::VICTORY;
-        footer_ = flags_["moral_contradiction"]
-            ? "You reached Fort Collins carrying provisions, memory, and contradiction."
-            : "You reached Fort Collins, but the valley's balance has shifted around you.";
-    } else {
-        queueEventForCurrentStop();
-    }
+    gameOverReason_.clear();
+    mode_ = GameMode::TRAVEL;
     clampResources();
+    if (mode_ == GameMode::GAME_OVER) return true;
+    arriveAtStop(false);          // any event at this stop not yet in "seen" still fires
+    if (mode_ == GameMode::TRAVEL) footer_ = "Save loaded.";
     return true;
 }

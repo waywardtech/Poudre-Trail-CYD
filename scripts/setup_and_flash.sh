@@ -259,8 +259,8 @@ if [ "$DO_COPY" -eq 1 ]; then
     sudo mkdir -p "$MOUNT/data/events"
     sudo mkdir -p "$MOUNT/saves"
 
-    info "Copying BMP art files..."
-    sudo cp "$REPO_ROOT"/data/art/*.bmp "$MOUNT/art/"
+    info "Copying art (GIF animations + PNG portraits)..."
+    sudo cp "$REPO_ROOT"/data/art/*.gif "$REPO_ROOT"/data/art/*.png "$MOUNT/art/"
 
     info "Copying CSV game content..."
     sudo cp "$REPO_ROOT/data/locations.csv" "$MOUNT/data/"

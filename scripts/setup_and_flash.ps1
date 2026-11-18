@@ -231,8 +231,9 @@ if ($doCopy) {
     New-Item -ItemType Directory -Path "$sdDrive\data\events" -Force | Out-Null
     New-Item -ItemType Directory -Path "$sdDrive\saves"       -Force | Out-Null
 
-    Write-Info "Copying BMP art files..."
-    Copy-Item "$RepoRoot\data\art\*.bmp" "$sdDrive\art\" -Force
+    Write-Info "Copying art (GIF animations + PNG portraits)..."
+    Copy-Item "$RepoRoot\data\art\*.gif" "$sdDrive\art\" -Force
+    Copy-Item "$RepoRoot\data\art\*.png" "$sdDrive\art\" -Force
 
     Write-Info "Copying CSV game content..."
     Copy-Item "$RepoRoot\data\locations.csv" "$sdDrive\data\" -Force

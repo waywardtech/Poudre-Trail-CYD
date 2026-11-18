@@ -1,6 +1,7 @@
-id,name,summary,milesFromStart,hasTradingPost,image
-laporte,Laporte,"Janis's settlement at the door of the valley. The store, the ford, the first decision.",0,true,art/laporte.bmp
-council_tree,Council Tree,"A cottonwood at a bend in the river. Chief Friday has stood here many times.",8,false,art/council_tree.bmp
-virginia_dale,Virginia Dale,"The home station between the mountain and the plain. Run on labor and nerves.",18,true,art/stage_road.bmp
-mason_claim,Mason's Claim,"Downstream ambition hardening into institutions. Every trade here is a position.",30,true,art/mason_claim.bmp
-fort_collins,Fort Collins,"The new order gathers on higher ground. What you carried here is what you became.",42,false,art/fort_collins.bmp
+id,name,summary,milesFromStart,hasTradingPost,image,mapX,mapY
+laporte,Laporte,"Antoine Janis's store at the Cache la Poudre ford, where the Overland stage and the army's Camp Collins both stop. Everyone here is passing through someone else's country.",0,true,art/laporte.gif,38,42
+canyon_mouth,Canyon Mouth,Where the river leaves the mountains. Ute and Arapaho families have used these crossings for longer than any ledger has existed.,6,true,art/canyon_mouth.gif,14,30
+council_tree,Council Tree,An old cottonwood on a bend of the river. People have met beneath it for as long as the river has bent here.,12,false,art/council_tree.gif,46,60
+virginia_dale,Virginia Dale,"The Overland home station, run on horses, labor and nerves. Mail and rumor change hands here faster than water.",22,true,art/virginia_dale.gif,30,10
+mason_claim,Mason's Claim,"Stakes, flags and a roof frame with no roof. Everything here is a position, and every position has a price.",34,true,art/mason_claim.gif,64,50
+fort_collins,Fort Collins,"Higher ground above the flood line, where the army means to rebuild what the river took. A map is about to become a fact.",42,false,art/fort_collins.gif,84,64

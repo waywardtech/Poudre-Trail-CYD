@@ -1,7 +1,60 @@
-# Poudre Trail — CYD
+# Poudre Trail - CYD
 
-A narrative travel game for the **ESP32-2432S028R** ("Cheap Yellow Display").  
-Set in the Cache la Poudre valley, Colorado, 1861.
+A narrative travel game for the **ESP32-2432S028R** ("Cheap Yellow Display", 2.8") and the
+**ESP32-3248S035R** (3.5"). Set in the Cache la Poudre valley, Colorado, May 1864: the river is
+rising, the army is coming, and every map is a promise to someone. *Who draws it when the water falls?*
+
+## The story
+
+You are a household travelling from **Laporte** down the Cache la Poudre to the high ground
+that will become **Fort Collins**. Along the way you meet the people who are quietly deciding what
+this valley is going to be, and a surveyor, Peter Ames, who is about to write it down.
+
+| Character | Who they are | What they want from you |
+|-----------|--------------|--------------------------|
+| **Antoine Janis** | Trader at Laporte since 1858 | Plain dealing; that you ask before you take |
+| **Chief Friday** | Arapaho leader | That you listen, and carry names accurately |
+| **Little Willow** | Arapaho guide and trader at the canyon mouth | Respect for the crossings she knows |
+| **Virginia Slade** | Keeper of the Virginia Dale home station | Useful hands; no mythmaking |
+| **Mason** | Land claimant and contractor | Your signature, and your agreement |
+| **Peter Ames** | Young army surveyor | Names for his blank map |
+
+**Route:** Laporte, Canyon Mouth, Council Tree, Virginia Dale, Mason's Claim, Fort Collins.
+
+**Timeline:** Day 1 is May 12, 1864. Time passes with distance, rest and some choices. Once the
+calendar reaches May 19 the river floods (a timed event that fires once, wherever you are). The
+epilogue records what history did next: the flood took Camp Collins from Laporte, the army raised
+Fort Collins on higher ground that August, and in November soldiers killed more than a hundred
+Cheyenne and Arapaho at Sand Creek.
+
+**Historical liberties:** this is fiction built on real places and people. Dates and events are
+compressed (the Slades left Virginia Dale before 1864; Jack Slade was hanged in March 1864), and
+the stone point is the kind of Folsom-era artifact later found in northern Colorado. Little Willow,
+Ames and Mason are invented. Chief Friday, Antoine Janis and Virginia Slade were real.
+
+## Gameplay
+
+- **Travel** costs days; each day costs food (9). Horses wear down, morale slips, and hunger hurts health.
+- **Camp** lets you *rest* (health, horses, morale) or *hunt* (3 ammo, may find game). Both cost a day.
+- **Trade** at five posts, spending trade goods. Several purchases per visit.
+- **Events**: each stop has story events (some unlock only after earlier choices), and each leg has a
+  55% chance of a random trail event (hail, a rising ford, a patrol that wants names, a fever...).
+  Every event happens at most once per run.
+- **Three reputations** (Janis, Friday, Mason) are tracked separately. Reach 5+ with both Mason and
+  Friday and you earn the *moral contradiction* flag.
+- **The map**: tap the title bar to open a stylised trail map. At Fort Collins, what you tell Ames
+  (every name and where you learned it, only a few, nothing, or Mason's line) decides the ending:
+  *A Map With Names*, *A Partial Map*, *The Blank Places*, or *Mason's Line*, with extra lines for the
+  flood, the stone point, and Virginia's letter.
+- **Result screens** show what changed (`Food +10, Trade goods -1`). Long text is paged: tap the text.
+- You can lose: food, health, horses or morale reaching 0 ends the run.
+
+## Features
+
+- Runs with **no SD card**: the whole story is compiled in (`include/world_data.hpp`). The SD card adds art and saves, and may override the story (see below).
+- **Animated art**: GIF scenes with small animated details (smoke, river glint, leaves, flags, fire) and PNG portraits, drawn from SD. The 3.5" panel draws them at 1.5x.
+- Layout adapts to the panel size (320x240 or 480x320); text never clips because it wraps and pages.
+- Split reputation, dated timeline, timed + random events, camp, trading, save/load (saves flags and which events have happened).
 
 ## Quick Start
 
@@ -47,102 +100,94 @@ pio device monitor   # serial output at 115200
 
 The firmware runs a full fallback world with hard-coded content when no SD card is present.
 
-## Features
-
-- **Split reputation system** — separate scores for Janis, Chief Friday, and Mason track relationships independently; each NPC's rep label shows in the status bar (`Neutral` → `Open` → `Trusting`/`Trusted`)
-- **Moral contradiction** — if you reach `repMason ≥ 5` AND `repFriday ≥ 5` (serving both new order and old), the victory footer records the contradiction
-- **Five route stops** — Laporte → Council Tree → Virginia Dale → Mason's Claim → Fort Collins (Virginia Dale added as a full stop with its own event and trading post)
-- **Janis event at start** — the game opens in EVENT mode at Laporte; Antoine Janis greets every run
-- **Expanded Chief Friday event** — three choices (listen / offer tobacco / press on) with distinct split-rep outcomes
-- **Save / load** — persists food, ammo, medicine, trade goods, horse condition, morale, health, all three rep scores, flags, and route position to `/saves/slot1.sav` on the SD card
-- **BMP art** — 24-bit BMP images read directly from SD (`/art/*.bmp`), displayed at 92×68 in the card panel; degrades gracefully when SD is absent
-- **Fallback world** — all events and locations are hard-coded in the engine; no SD card is needed to play
-- **CSV-driven content** — load custom events, locations, and trades from SD (`/data/`)
-
 ## Hardware
 
-| Component | Value |
-|-----------|-------|
-| Board | ESP32-2432S028R (CYD) |
-| Display | ILI9341 320×240 |
-| Touch | XPT2046 capacitive |
-| Storage | MicroSD via SPI |
-| Backlight | GPIO 21 |
-| TFT CS | GPIO 15 |
-| TFT DC | GPIO 2 |
-| TFT RST | GPIO 4 |
-| TFT MOSI | GPIO 13 |
-| TFT MISO | GPIO 12 |
-| TFT SCK | GPIO 14 |
-| Touch CS | GPIO 33 |
-| Touch IRQ | GPIO 36 |
-| SD CS | GPIO 5 |
+Two supported boards (same shared SPI bus; pick the PlatformIO environment that matches yours):
+
+| | ESP32-3248S035R (default) | ESP32-2432S028R |
+|---|---|---|
+| Display | 3.5" ST7796, 480x320 | 2.8" ILI9341, 320x240 |
+| Backlight | GPIO 27 | GPIO 21 |
+| Env | `esp32-3248S035R` | `esp32-2432S028R` |
+
+Shared by both: touch XPT2046 (CS 33, IRQ 36), SD (CS 5), TFT CS 15, DC 2, MOSI 13, MISO 12, SCK 14, RST not used.
+The sketch drives both backlight pins, so it lights either board.
 
 ## Build
-
-### PlatformIO (recommended)
-
-Install PlatformIO Core once, then build from the repo root:
 
 ```bash
 pip install platformio
 
-pio run                  # compile
-pio run -t upload        # flash to device
-pio device monitor       # serial output at 115200
+pio run                          # 3.5" board (default)
+pio run -e esp32-2432S028R       # 2.8" board
+pio run -t upload                # flash
+pio device monitor               # serial output at 115200
 ```
 
-The `platformio.ini` at the repo root configures the `esp32-2432S028R` environment with TFT_eSPI build flags — no `User_Setup.h` edits needed. Requires PlatformIO Core >= 6.x.
+`platformio.ini` carries the TFT_eSPI configuration; no `User_Setup.h` edits needed. Libraries
+(TFT_eSPI, XPT2046_Touchscreen, AnimatedGIF, PNGdec) are fetched automatically.
 
 ### Host tests (g++)
 
 ```bash
-cd test
-make run
+make -C test run
 ```
 
-Compiles and runs the engine test suite on the host (no Arduino toolchain needed). All 24 checks should pass.
+Runs the engine tests (no Arduino toolchain needed): world loading, event queue and results,
+calendar, timed flood, save/load, camp and trade, game over, a full run to the epilogue,
+contradiction flag, finale gating, determinism.
+
+## Editing the story
+
+The story lives in plain files; no C++ changes are needed to add events.
+
+- `data/locations.csv`, `data/events.csv`, `data/trades.csv`, `data/events/<id>.txt`
+- `events.csv` columns: `id, locationId, title, bodyFile, image, kind, requiresFlag`, then three choices of
+  `label, food, ammo, med, trade, horse, morale, health, rep_janis, rep_friday, rep_mason, setFlag, result, days`
+- `kind`: `story` (fires at its location), `trail` (random, between stops) or `timed:N` (fires on arrival once day >= N)
+- `requiresFlag`: `a&!b&c|d` means a AND NOT b AND (c OR d). `setFlag` takes several flags separated by commas.
+- After editing, run `python3 tools/embed_world.py` to rebuild `include/world_data.hpp` (the built-in copy
+  of the story), then rebuild the firmware. Copying `data/` to the SD card overrides the built-in story
+  without reflashing; an SD story in the old 13-column format is ignored automatically.
+
+## Art
+
+`data/art/` holds 96x72 images: **GIF** animations for scenes with no single subject (small details
+move: smoke, river glint, leaves, flags, firelight) and **PNG** stills for portraits and objects.
+The 3.5" board draws them at 1.5x. Regenerate everything with `python3 tools/make_art.py` (needs Pillow).
+Art is read from the SD card; without one the game shows a placeholder and still plays.
 
 ## SD card layout
 
-Copy these directories to the root of a FAT32-formatted SD card:
+Copy the contents of `data/` to the SD card (the setup scripts do this for you):
 
 ```
-/art/           ← BMP images from data/art/
-/data/
-  locations.csv
-  events.csv
-  trades.csv
-  events/
-    janis_store.txt
-    chief_friday.txt
-    virginia_dale.txt
-    mason_reveal.txt
-    flood_1864.txt
-/saves/         ← created automatically on first save
+/art/*.gif  /art/*.png
+/data/locations.csv  /data/events.csv  /data/trades.csv
+/data/events/*.txt
+/saves/slot1.sav        <- created on first save
 ```
-
-Without an SD card the engine runs the built-in fallback world.
 
 ## Changelog
 
+### Story, gameplay and graphics pass
+
+- **Story**: 1864 timeline with a real calendar and a timed flood; new characters (Little Willow, Peter Ames) and the central question of who draws the map; 21 events, 12 trades, 6 stops
+- **Gameplay**: random trail events, camp (rest / hunt), multi-purchase trading, result screens with deltas, game-over on food / health / horses / morale, endings driven by flags, saved flags and seen events
+- **Map**: stylised trail map overlay (tap the title bar)
+- **Art**: PNG portraits and animated GIF scenes replace the BMPs; 3.5" support with adaptive layout and 1.5x art
+- **Text**: word-wrapped, paged body text (no clipping); long results fit
+- **Single source of truth**: the CSVs are baked into the firmware by `tools/embed_world.py`; the hard-coded duplicate world is gone
+
 ### merge/reputation-e2e
 
-- **Split reputation**: `resources.reputation` replaced by `repJanis`, `repFriday`, `repMason`; status bar shows all three labels
-- **Moral contradiction**: threshold is `repMason ≥ 5 AND repFriday ≥ 5`; victory footer branches on `flags_["moral_contradiction"]`
-- **travelTo() mode guard**: no-op when mode is `VICTORY` or `GAME_OVER`; `clampResources()` triggers `GAME_OVER` before the VICTORY check in `travelTo()`
-- **Janis fires at start**: `startGame()` sets `mode_ = EVENT` and queues the Laporte event immediately
-- **Virginia Dale**: added as the third route stop between Council Tree and Mason's Claim; has its own event and two trades
-- **Chief Friday expanded**: three choices (listen / offer tobacco / press on) with distinct rep deltas
-- **Food drain rebalance**: `-12` per travel (up from `-8` in art_save; `-6` horse condition, `-1` morale unchanged)
-- **Save format**: now persists `ammo`, `medicine`, `repJanis`, `repFriday`, `repMason`, `day`, `flag_moral_contradiction`; old saves load with sane defaults
-- **Display ported**: `Arduino_GFX_Library` → `TFT_eSPI` (same pin wiring); `pushPixels()` replaces `draw16bitRGBBitmap()`
+- Split reputation (`repJanis`, `repFriday`, `repMason`), moral contradiction flag, `travelTo()` mode guard, Virginia Dale stop, expanded Chief Friday event, TFT_eSPI port.
 
 ## Hardware-only checklist (cannot be verified in CI)
 
-- [ ] Touch calibration: verify `TOUCH_MIN/MAX_X/Y` constants in `src/main.cpp` against your specific panel
-- [ ] BMP art renders without color inversion — if colors are wrong, add `tft.setSwapBytes(true)` before `drawBmpFromSd()` call
-- [ ] SD card mounts and `SD content loaded` appears in boot splash
-- [ ] Save writes to `/saves/slot1.sav` and survives power cycle
-- [ ] Touch debounce (220 ms) feels responsive — adjust `lastTouchMs` threshold as needed
-- [ ] Backlight (GPIO 21) lights immediately on power-up
+- [ ] Touch: tap buttons and the title bar; if taps land mirrored flip `TOUCH_FLIP_X/Y`, if offset adjust `TOUCH_MIN/MAX_X/Y` in `src/main.cpp` (taps print `[TOUCH]` to serial)
+- [ ] GIFs animate and PNGs show correct colours (if red and blue look swapped, call `tft.setSwapBytes(true)` in `setup()`)
+- [ ] SD card mounts (`[SD] OK` on serial) and art appears; frame rate is smooth enough
+- [ ] Panel size: serial prints `[TFT] WxH`; 480x320 means the 3.5" layout is active
+- [ ] Save writes to `/saves/slot1.sav` and loads after a power cycle
+- [ ] Backlight lights immediately on power-up
