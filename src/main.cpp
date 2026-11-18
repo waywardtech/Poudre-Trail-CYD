@@ -13,21 +13,13 @@
 #include <SPI.h>
 #include <SD.h>
 #include <TFT_eSPI.h>
-#include <XPT2046_Touchscreen.h>
+#include "cyd_display.h"
 #include "poudre_trail_engine.hpp"
 
-// ─── Pin assignments (CYD / ESP32-2432S028R) ─────────────────────────────────
-static constexpr int PIN_TFT_BL    = 21;
-static constexpr int PIN_TOUCH_CS  = 33;
-static constexpr int PIN_TOUCH_IRQ = 36;
-static constexpr int PIN_SD_CS     = 5;
-
-
-// Touch calibration (raw ADC values for the CYD panel)
-static constexpr int TOUCH_MIN_X = 240;
-static constexpr int TOUCH_MAX_X = 3850;
-static constexpr int TOUCH_MIN_Y = 240;
-static constexpr int TOUCH_MAX_Y = 3850;
+// Pin map, touch calibration, touch + SD bring-up per board: include/cyd_display.h
+using cyd::TOUCH_MIN_X; using cyd::TOUCH_MAX_X;
+using cyd::TOUCH_MIN_Y; using cyd::TOUCH_MAX_Y;
+using cyd::TOUCH_FLIP_X; using cyd::TOUCH_FLIP_Y;
 
 // Set from the panel after setRotation(1): 320x240 (2.8") or 480x320 (3.5")
 static int TFT_W = 320;
@@ -40,7 +32,6 @@ static constexpr const char* SAVE_PATH = "/saves/slot1.sav";
 // ─── Globals ─────────────────────────────────────────────────────────────────
 
 TFT_eSPI tft = TFT_eSPI();
-XPT2046_Touchscreen touch(PIN_TOUCH_CS, PIN_TOUCH_IRQ);
 GameEngine game;
 
 struct Button {
@@ -58,9 +49,7 @@ static char     sbuf[80];      // scratch buffer for snprintf
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// Flip if taps land mirrored on your panel (serial prints raw + mapped coords).
-static constexpr bool TOUCH_FLIP_X = false;
-static constexpr bool TOUCH_FLIP_Y = false;
+// Flip TOUCH_FLIP_X/Y in cyd_display.h if taps land mirrored (serial prints raw + mapped coords).
 static int mapTouchX(int raw) {
     return TOUCH_FLIP_X ? map(raw, TOUCH_MIN_X, TOUCH_MAX_X, TFT_W, 0)
                         : map(raw, TOUCH_MIN_X, TOUCH_MAX_X, 0, TFT_W);
@@ -334,17 +323,15 @@ static void handleSelection(int idx, const Snapshot& s) {
 }
 
 static void pollTouch(const Snapshot& s) {
-    if (!touch.touched()) return;
+    int rx, ry;
+    if (!cyd::touchRead(rx, ry)) return;
     if (millis() - lastTouchMs < 220) return;
-    TS_Point p = touch.getPoint();
-    int x = clampInt(mapTouchX(p.x), 0, TFT_W - 1);
-    int y = clampInt(mapTouchY(p.y), 0, TFT_H - 1);
+    lastTouchMs = millis();        // debounce every press, not only button hits
+    int x = clampInt(mapTouchX(rx), 0, TFT_W - 1);
+    int y = clampInt(mapTouchY(ry), 0, TFT_H - 1);
     int hit = buttonHit(x, y);
-    Serial.printf("[TOUCH] raw=%d,%d -> %d,%d hit=%d\n", p.x, p.y, x, y, hit);
-    if (hit >= 0) {
-        lastTouchMs = millis();
-        handleSelection(hit, s);
-    }
+    Serial.printf("[TOUCH] raw=%d,%d -> %d,%d hit=%d\n", rx, ry, x, y, hit);
+    if (hit >= 0) handleSelection(hit, s);
 }
 
 // ─── SD content loading ──────────────────────────────────────────────────────
@@ -373,35 +360,40 @@ static void loadGameContent() {
 
 void setup() {
     Serial.begin(115200);
-    pinMode(PIN_TFT_BL, OUTPUT);
-    digitalWrite(PIN_TFT_BL, HIGH);
-    pinMode(27, OUTPUT);           // 3.5" boards drive the backlight from GPIO 27
-    digitalWrite(27, HIGH);
+    pinMode(cyd::PIN_TFT_BL, OUTPUT);
+    digitalWrite(cyd::PIN_TFT_BL, HIGH);
 
     tft.init();
     tft.setRotation(1);
     TFT_W = tft.width();
     TFT_H = tft.height();
     tft.fillScreen(TFT_BLACK);
-    Serial.printf("[TFT] %dx%d\n", TFT_W, TFT_H);
+    Serial.printf("[TFT] %s %dx%d\n", cyd::BOARD_NAME, TFT_W, TFT_H);
 
-    touch.begin();
-    touch.setRotation(1);
-    // Touch rotation and axis swap handled in mapTouchX/Y calibration constants
+    cyd::touchBegin();
+    Serial.printf("[TOUCH] cs=%d irq=%d cal x=%d..%d y=%d..%d\n",
+                  cyd::PIN_TOUCH_CS, cyd::PIN_TOUCH_IRQ,
+                  TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y);
 
-    // touch.begin() calls SPI.begin() internally, resetting pins to ESP32
-    // defaults (18/19/23). Re-init the global SPI bus to the CYD pins.
-    // Pass no SS here — SD library manages CS itself; passing SS to SPI.begin()
-    // can cause the hardware to auto-assert it unexpectedly.
-    SPI.begin(14, 12, 13, -1); // SCK, MISO, MOSI, no SS
-    delay(10); // let bus settle after reconfiguration
-
-    Serial.printf("[SD] Calling SD.begin(cs=%d)...\n", PIN_SD_CS);
-    if (!SD.begin(PIN_SD_CS, SPI, 4000000)) {
+    Serial.printf("[SD] Calling SD.begin(cs=%d)...\n", cyd::PIN_SD_CS);
+    if (!cyd::sdBegin()) {
         Serial.println("[SD] FAILED - running fallback world");
         bootMessage = "SD init failed - fallback world";
     } else {
-        Serial.println("[SD] OK");
+        Serial.printf("[SD] OK type=%d size=%lluMB\n", (int)SD.cardType(),
+                      SD.cardSize() / (1024ULL * 1024ULL));
+        int bmpCount = 0;
+        if (File art = SD.open("/art")) {
+            for (File f = art.openNextFile(); f; f = art.openNextFile()) {
+                String n = f.name();
+                n.toLowerCase();
+                if (n.endsWith(".bmp")) ++bmpCount;
+                f.close();
+            }
+            art.close();
+        }
+        Serial.printf("[SD] /art: %d .bmp files; /data/locations.csv %s\n", bmpCount,
+                      SD.exists("/data/locations.csv") ? "present" : "MISSING");
         sdMounted = true;
         loadGameContent();
     }
@@ -444,6 +436,10 @@ void loop() {
         renderSnapshot(s);
         needsRender = false;
     }
+#ifdef CYD_TOUCH_DEBUG
+    static uint32_t lastDbg = 0;
+    if (millis() - lastDbg > 250) { lastDbg = millis(); cyd::touchDebugDump(); }
+#endif
     pollTouch(s);
     delay(25);
 }
