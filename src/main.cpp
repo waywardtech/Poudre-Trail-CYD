@@ -1,6 +1,7 @@
 // Poudre Trail - CYD main sketch
-// Boards: ESP32-2432S028R (2.8" ILI9341 320x240) and ESP32-3248S035R (3.5" ST7796 480x320)
-// Display: TFT_eSPI   Touch: XPT2046   Storage: SD card (shared SPI bus)
+// Board: ESP32-2432S028R (2.8" 320x240, ILI9341 or ST7789). Pins, buses and touch
+// calibration live in include/cyd_display.h (from the CYD System Inspector project).
+// Display: LovyanGFX (HSPI)   Touch: XPT2046 on its own pins   SD: own VSPI bus
 //
 // The whole game is compiled in (include/world_data.hpp), so it runs with no SD card.
 // Optional SD layout, which overrides the built-in content when present and valid:
@@ -14,29 +15,14 @@
 #include <SD.h>
 #include <AnimatedGIF.h>
 #include <PNGdec.h>
-#include <TFT_eSPI.h>
-#include <XPT2046_Touchscreen.h>
+#include "cyd_display.h"
 #include <vector>
 #include "poudre_trail_engine.hpp"
-
-// --- Pins (shared SPI bus SCK=14 MISO=12 MOSI=13; TFT CS=15) -----------------
-static constexpr int PIN_TFT_BL    = 21;   // 2.8" backlight (3.5" boards use 27)
-static constexpr int PIN_TFT_BL_35 = 27;
-static constexpr int PIN_TOUCH_CS  = 33;
-static constexpr int PIN_TOUCH_IRQ = 36;
-static constexpr int PIN_SD_CS     = 5;
-
-// Touch calibration (raw ADC range of the XPT2046); flip if taps land mirrored.
-static constexpr int  TOUCH_MIN_X = 240;
-static constexpr int  TOUCH_MAX_X = 3850;
-static constexpr int  TOUCH_MIN_Y = 240;
-static constexpr int  TOUCH_MAX_Y = 3850;
-static constexpr bool TOUCH_FLIP_X = false;
-static constexpr bool TOUCH_FLIP_Y = false;
 
 static constexpr const char* SAVE_PATH = "/saves/slot1.sav";
 
 // Palette (RGB565)
+static constexpr uint16_t COL_WHITE   = 0xFFFF;
 static constexpr uint16_t COL_BG      = 0x0000;
 static constexpr uint16_t COL_BAR     = 0x2965;
 static constexpr uint16_t COL_PANEL   = 0x18C3;
@@ -47,8 +33,8 @@ static constexpr uint16_t COL_DANGER  = 0xF800;
 static constexpr uint16_t COL_DIM     = 0x8410;
 
 // --- Globals ----------------------------------------------------------------
-TFT_eSPI tft = TFT_eSPI();
-XPT2046_Touchscreen touch(PIN_TOUCH_CS, PIN_TOUCH_IRQ);
+CYDDisplay tft;
+SPIClass sdSpi(VSPI);          // the microSD slot has its own bus
 GameEngine game;
 
 static int  TFT_W = 320, TFT_H = 240;
@@ -109,14 +95,6 @@ static void computeLayout() {
 }
 
 // --- Helpers ----------------------------------------------------------------
-static int mapTouchX(int raw) {
-    return TOUCH_FLIP_X ? map(raw, TOUCH_MIN_X, TOUCH_MAX_X, TFT_W, 0)
-                        : map(raw, TOUCH_MIN_X, TOUCH_MAX_X, 0, TFT_W);
-}
-static int mapTouchY(int raw) {
-    return TOUCH_FLIP_Y ? map(raw, TOUCH_MIN_Y, TOUCH_MAX_Y, TFT_H, 0)
-                        : map(raw, TOUCH_MIN_Y, TOUCH_MAX_Y, 0, TFT_H);
-}
 static int clampInt(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 static String readTextFile(const char* path) {
@@ -375,7 +353,7 @@ static void wrapBody(const String& text, int maxW) {
 
 // --- Rendering --------------------------------------------------------------
 static void printStat(const char* label, int value, int warnBelow, int dangerBelow) {
-    uint16_t c = value < dangerBelow ? COL_DANGER : (value < warnBelow ? COL_WARN : TFT_WHITE);
+    uint16_t c = value < dangerBelow ? COL_DANGER : (value < warnBelow ? COL_WARN : COL_WHITE);
     tft.setTextColor(c);
     snprintf(sbuf, sizeof(sbuf), "%s%d ", label, value);
     tft.print(sbuf);
@@ -383,7 +361,7 @@ static void printStat(const char* label, int value, int warnBelow, int dangerBel
 
 static void renderTitleBar(const Snapshot& s) {
     tft.fillRect(0, 0, TFT_W, L.titleH, COL_BAR);
-    tft.setTextColor(TFT_WHITE);
+    tft.setTextColor(COL_WHITE);
     tft.setTextFont(1);
     tft.setTextSize(2);
     tft.setCursor(8, L.big ? 7 : 4);
@@ -399,7 +377,7 @@ static void renderTitleBar(const Snapshot& s) {
     tft.print("Map");
     if (L.big) {
         snprintf(sbuf, sizeof(sbuf), "%s - %s", s.dateLabel.c_str(), s.locationName.c_str());
-        tft.setTextColor(TFT_WHITE);
+        tft.setTextColor(COL_WHITE);
         tft.setCursor(220, 6);
         tft.print(sbuf);
     }
@@ -411,7 +389,7 @@ static void renderStatus(const Snapshot& s) {
     tft.setTextSize(1);
     int y = L.statusY + 3;
     if (!L.big) {
-        tft.setTextColor(TFT_WHITE);
+        tft.setTextColor(COL_WHITE);
         tft.setCursor(6, y);
         snprintf(sbuf, sizeof(sbuf), "%s  Day %d  %s", s.dateLabel.c_str(), s.day, s.locationName.c_str());
         tft.print(sbuf);
@@ -474,7 +452,7 @@ static void renderPanel(const Snapshot& s) {
     int first = bodyPage * bodyPerPage;
     for (int i = 0; i < bodyPerPage && first + i < (int)bodyLinesAll.size(); ++i) {
         int idx = first + i;
-        tft.setTextColor(bodyDeltaStart >= 0 && idx >= bodyDeltaStart ? COL_TEAL : TFT_WHITE);
+        tft.setTextColor(bodyDeltaStart >= 0 && idx >= bodyDeltaStart ? COL_TEAL : COL_WHITE);
         tft.setCursor(L.bodyX, L.bodyY + i * L.lh);
         tft.print(bodyLinesAll[idx]);
     }
@@ -494,7 +472,7 @@ static void renderButtons(const Snapshot& s) {
         if (!b.enabled) continue;
         tft.fillRoundRect(b.x, b.y, b.w, b.h, 6, COL_BAR);
         tft.drawRoundRect(b.x, b.y, b.w, b.h, 6, COL_AMBER);
-        tft.setTextColor(TFT_WHITE);
+        tft.setTextColor(COL_WHITE);
         String lbl = b.label;
         int maxW = b.w - 16;
         bool cut = false;
@@ -509,7 +487,7 @@ static void renderFooter(const Snapshot& s) {
     tft.fillRect(0, L.footY, TFT_W, L.footH, COL_BAR);
     tft.setTextFont(L.uiFont);
     tft.setTextSize(1);
-    tft.setTextColor(TFT_WHITE);
+    tft.setTextColor(COL_WHITE);
     String foot = (transientUntil > millis()) ? transientMsg : String(s.footer.c_str());
     while (foot.length() > 3 && tft.textWidth(foot) > TFT_W - 8) foot.remove(foot.length() - 1);
     tft.setCursor(4, L.footY + (L.footH - tft.fontHeight()) / 2);
@@ -531,7 +509,7 @@ static void renderMap(const Snapshot& s) {
     freeArt();
     tft.fillScreen(COL_BG);
     tft.fillRect(0, 0, TFT_W, L.titleH, COL_BAR);
-    tft.setTextColor(TFT_WHITE);
+    tft.setTextColor(COL_WHITE);
     tft.setTextFont(1); tft.setTextSize(2);
     tft.setCursor(8, L.big ? 7 : 4);
     tft.print("Trail Map");
@@ -568,8 +546,8 @@ static void renderMap(const Snapshot& s) {
         int px = X(route[i].mapX), py = Y(route[i].mapY);
         uint16_t c = (int)i <= cur ? COL_AMBER : COL_DIM;
         tft.fillCircle(px, py, L.big ? 5 : 3, c);
-        if ((int)i == cur) tft.drawCircle(px, py, L.big ? 9 : 6, TFT_WHITE);
-        tft.setTextColor((int)i == cur ? TFT_WHITE : c);
+        if ((int)i == cur) tft.drawCircle(px, py, L.big ? 9 : 6, COL_WHITE);
+        tft.setTextColor((int)i == cur ? COL_WHITE : c);
         String nm = route[i].name.c_str();
         int tw = tft.textWidth(nm);
         int tx = clampInt(px - tw / 2, mx + 2, mx + mw - tw - 2);
@@ -580,7 +558,7 @@ static void renderMap(const Snapshot& s) {
     }
 
     tft.fillRect(0, L.footY, TFT_W, L.footH, COL_BAR);
-    tft.setTextColor(TFT_WHITE);
+    tft.setTextColor(COL_WHITE);
     tft.setCursor(4, L.footY + (L.footH - tft.fontHeight()) / 2);
     tft.print("Stylised, not to scale.  Tap to close.");
 }
@@ -634,12 +612,12 @@ static void handleSelection(int idx, const Snapshot& s) {
 }
 
 static void pollTouch(const Snapshot& s) {
-    if (!touch.touched()) return;
     if (millis() - lastTouchMs < 250) return;
-    TS_Point p = touch.getPoint();
-    int x = clampInt(mapTouchX(p.x), 0, TFT_W - 1);
-    int y = clampInt(mapTouchY(p.y), 0, TFT_H - 1);
-    Serial.printf("[TOUCH] raw=%d,%d -> %d,%d\n", p.x, p.y, x, y);
+    uint16_t tx = 0, ty = 0;
+    if (!tft.getTouch(&tx, &ty)) return;
+    int x = clampInt(tx, 0, TFT_W - 1);
+    int y = clampInt(ty, 0, TFT_H - 1);
+    Serial.printf("[TOUCH] %d,%d\n", x, y);
     lastTouchMs = millis();
 
     if (showMap) { showMap = false; needsRender = true; return; }
@@ -673,25 +651,18 @@ static void loadGameContent() {
 // --- Setup / Loop -----------------------------------------------------------
 void setup() {
     Serial.begin(115200);
-    pinMode(PIN_TFT_BL, OUTPUT);    digitalWrite(PIN_TFT_BL, HIGH);
-    pinMode(PIN_TFT_BL_35, OUTPUT); digitalWrite(PIN_TFT_BL_35, HIGH);
-
     tft.init();
     tft.setRotation(1);
+    tft.setBrightness(255);
     TFT_W = tft.width();
     TFT_H = tft.height();
     computeLayout();
     tft.fillScreen(COL_BG);
-    Serial.printf("[TFT] %dx%d big=%d\n", TFT_W, TFT_H, (int)L.big);
+    Serial.printf("[TFT] %s %dx%d big=%d\n", PANEL_NAME, TFT_W, TFT_H, (int)L.big);
 
-    touch.begin();
-    touch.setRotation(1);
-    // touch.begin() calls SPI.begin() with default pins; put the shared bus back.
-    SPI.begin(14, 12, 13, -1);
-    delay(10);
-
-    Serial.printf("[SD] Calling SD.begin(cs=%d)...\n", PIN_SD_CS);
-    if (!SD.begin(PIN_SD_CS, SPI, 4000000)) {
+    Serial.printf("[SD] VSPI sck=%d miso=%d mosi=%d cs=%d\n", PIN_SD_SCLK, PIN_SD_MISO, PIN_SD_MOSI, PIN_SD_CS);
+    sdSpi.begin(PIN_SD_SCLK, PIN_SD_MISO, PIN_SD_MOSI, PIN_SD_CS);
+    if (!SD.begin(PIN_SD_CS, sdSpi, 10000000)) {
         Serial.println("[SD] FAILED - built-in story, no art");
         bootMessage = "No SD card - built-in story, no art";
     } else {
@@ -706,7 +677,7 @@ void setup() {
                   (unsigned)game.route().size(), bootMessage.c_str(), (unsigned)ESP.getFreeHeap());
 
     tft.setTextFont(1);
-    tft.setTextColor(TFT_WHITE);
+    tft.setTextColor(COL_WHITE);
     tft.setTextSize(2);
     tft.setCursor(24, TFT_H / 2 - 20); tft.print("Poudre Trail");
     tft.setTextSize(1);

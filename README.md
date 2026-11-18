@@ -1,8 +1,7 @@
 # Poudre Trail - CYD
 
-A narrative travel game for the **ESP32-2432S028R** ("Cheap Yellow Display", 2.8") and the
-**ESP32-3248S035R** (3.5"). Set in the Cache la Poudre valley, Colorado, May 1864: the river is
-rising, the army is coming, and every map is a promise to someone. *Who draws it when the water falls?*
+A narrative travel game for the **ESP32-2432S028R** ("Cheap Yellow Display", 2.8"). Set in the
+Cache la Poudre valley, Colorado, May 1864: the river is rising, the army is coming, and every map is a promise to someone. *Who draws it when the water falls?*
 
 ## The story
 
@@ -52,7 +51,7 @@ Ames and Mason are invented. Chief Friday, Antoine Janis and Virginia Slade were
 ## Features
 
 - Runs with **no SD card**: the whole story is compiled in (`include/world_data.hpp`). The SD card adds art and saves, and may override the story (see below).
-- **Animated art**: GIF scenes with small animated details (smoke, river glint, leaves, flags, fire) and PNG portraits, drawn from SD. The 3.5" panel draws them at 1.5x.
+- **Animated art**: GIF scenes with small animated details (smoke, river glint, leaves, flags, fire) and PNG portraits, drawn from SD.
 - Layout adapts to the panel size (320x240 or 480x320); text never clips because it wraps and pages.
 - Split reputation, dated timeline, timed + random events, camp, trading, save/load (saves flags and which events have happened).
 
@@ -102,30 +101,40 @@ The firmware runs a full fallback world with hard-coded content when no SD card 
 
 ## Hardware
 
-Two supported boards (same shared SPI bus; pick the PlatformIO environment that matches yours):
+Target: **ESP32-2432S028R** ("Cheap Yellow Display", 2.8", 320x240). The pin map, bus layout, panel
+variants and touch calibration come from the CYD System Inspector project
+([waywardtech/CYD-Diagnostic](https://github.com/waywardtech/CYD-Diagnostic), `firmware/src/config.h`
+and `display.h`) and live in `include/cyd_display.h`:
 
-| | ESP32-3248S035R (default) | ESP32-2432S028R |
-|---|---|---|
-| Display | 3.5" ST7796, 480x320 | 2.8" ILI9341, 320x240 |
-| Backlight | GPIO 27 | GPIO 21 |
-| Env | `esp32-3248S035R` | `esp32-2432S028R` |
+| Part | Bus / pins |
+|------|------------|
+| LCD | HSPI: SCLK 14, MOSI 13, MISO 12, DC 2, CS 15, backlight 21 (no reset pin) |
+| Touch (XPT2046) | its own pins, software SPI: SCLK 25, MOSI 32, MISO 39, CS 33 |
+| microSD | its own VSPI bus: SCLK 18, MISO 19, MOSI 23, CS 5 |
+| Expansion P3 | GPIO22 / GPIO27 (I2C); GPIO21 is the backlight |
 
-Shared by both: touch XPT2046 (CS 33, IRQ 36), SD (CS 5), TFT CS 15, DC 2, MOSI 13, MISO 12, SCK 14, RST not used.
-The sketch drives both backlight pins, so it lights either board.
+Two panel controllers ship under this board name, so there are two build environments:
+
+| Env | Board |
+|-----|-------|
+| `esp32-2432S028R` (default) | micro-USB board, ILI9341 panel |
+| `esp32-2432S028R-st7789` | USB-C board, ST7789 panel with inverted colour |
+
+If colours look inverted, or the picture is shifted or the wrong size, try the other env.
+If taps land offset or mirrored, adjust `TOUCH_X_MIN/MAX` and `TOUCH_Y_MIN/MAX` in `include/cyd_display.h`.
 
 ## Build
 
 ```bash
 pip install platformio
 
-pio run                          # 3.5" board (default)
-pio run -e esp32-2432S028R       # 2.8" board
-pio run -t upload                # flash
-pio device monitor               # serial output at 115200
+pio run                              # ILI9341 board (default)
+pio run -e esp32-2432S028R-st7789    # ST7789 (USB-C) board
+pio run -t upload                    # flash
+pio device monitor                   # serial output at 115200
 ```
 
-`platformio.ini` carries the TFT_eSPI configuration; no `User_Setup.h` edits needed. Libraries
-(TFT_eSPI, XPT2046_Touchscreen, AnimatedGIF, PNGdec) are fetched automatically.
+Libraries (LovyanGFX, AnimatedGIF, PNGdec) are fetched automatically.
 
 ### Host tests (g++)
 
@@ -154,7 +163,7 @@ The story lives in plain files; no C++ changes are needed to add events.
 
 `data/art/` holds 96x72 images: **GIF** animations for scenes with no single subject (small details
 move: smoke, river glint, leaves, flags, firelight) and **PNG** stills for portraits and objects.
-The 3.5" board draws them at 1.5x. Regenerate everything with `python3 tools/make_art.py` (needs Pillow).
+Regenerate everything with `python3 tools/make_art.py` (needs Pillow).
 Art is read from the SD card; without one the game shows a placeholder and still plays.
 
 ## SD card layout
@@ -175,7 +184,8 @@ Copy the contents of `data/` to the SD card (the setup scripts do this for you):
 - **Story**: 1864 timeline with a real calendar and a timed flood; new characters (Little Willow, Peter Ames) and the central question of who draws the map; 21 events, 12 trades, 6 stops
 - **Gameplay**: random trail events, camp (rest / hunt), multi-purchase trading, result screens with deltas, game-over on food / health / horses / morale, endings driven by flags, saved flags and seen events
 - **Map**: stylised trail map overlay (tap the title bar)
-- **Art**: PNG portraits and animated GIF scenes replace the BMPs; 3.5" support with adaptive layout and 1.5x art
+- **Art**: PNG portraits and animated GIF scenes replace the BMPs
+- **Hardware**: display, touch and SD now use the CYD System Inspector's pin map (separate touch and SD buses), via LovyanGFX; ILI9341 and ST7789 env
 - **Text**: word-wrapped, paged body text (no clipping); long results fit
 - **Single source of truth**: the CSVs are baked into the firmware by `tools/embed_world.py`; the hard-coded duplicate world is gone
 
@@ -185,9 +195,9 @@ Copy the contents of `data/` to the SD card (the setup scripts do this for you):
 
 ## Hardware-only checklist (cannot be verified in CI)
 
-- [ ] Touch: tap buttons and the title bar; if taps land mirrored flip `TOUCH_FLIP_X/Y`, if offset adjust `TOUCH_MIN/MAX_X/Y` in `src/main.cpp` (taps print `[TOUCH]` to serial)
-- [ ] GIFs animate and PNGs show correct colours (if red and blue look swapped, call `tft.setSwapBytes(true)` in `setup()`)
+- [ ] Touch: tap buttons and the title bar; if taps land offset or mirrored adjust the `TOUCH_*` range in `include/cyd_display.h` (taps print `[TOUCH]` to serial)
+- [ ] GIFs animate and PNGs show correct colours (if colours are inverted or wrong, try the other panel env)
 - [ ] SD card mounts (`[SD] OK` on serial) and art appears; frame rate is smooth enough
-- [ ] Panel size: serial prints `[TFT] WxH`; 480x320 means the 3.5" layout is active
+- [ ] Panel: serial prints `[TFT] <controller> WxH`; expect 320x240
 - [ ] Save writes to `/saves/slot1.sav` and loads after a power cycle
 - [ ] Backlight lights immediately on power-up
