@@ -137,6 +137,18 @@ Runs the engine tests (no Arduino toolchain needed): world loading, event queue 
 calendar, timed flood, save/load, camp and trade, game over, a full run to the epilogue,
 contradiction flag, finale gating, determinism.
 
+## Diagnostics
+
+Tap the **footer bar** (bottom strip) to open a live diagnostics screen, refreshed twice a second:
+firmware build, board and chip, panel size and layout, SD card type/size and boot result, heap
+(free / minimum / largest block), uptime, current art (file, bytes, decode ms, GIF frames played,
+failure reason), touch (IRQ pin level, tap count, raw and mapped coordinates, which button was hit)
+and the game state (mode, stop, day, RNG, events seen, flags). Taps elsewhere draw a crosshair,
+which is the quickest way to check touch calibration. Tap the footer again to close.
+
+Over serial (115200 baud): `d` dumps the same report, `i` toggles the screen, `m` toggles the map.
+A one-line `[DIAG]` heartbeat prints every 10 s, and each tap prints a `[TOUCH]` line.
+
 ## Editing the story
 
 The story lives in plain files; no C++ changes are needed to add events.
