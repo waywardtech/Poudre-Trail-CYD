@@ -162,6 +162,11 @@ static bool drawBmpFromSd(const String& path, int x, int y, int maxW, int maxH) 
     uint8_t  rowBuf[288];
     uint16_t lineBuf[96];
 
+    // lineBuf holds native little-endian RGB565; the panel wants big-endian.
+    // Without the swap, colours come out as saturated red/blue/magenta noise.
+    const bool prevSwap = tft.getSwapBytes();
+    tft.setSwapBytes(true);
+
     for (int row = 0; row < drawH; ++row) {
         int srcRow = flip ? (bmpH - 1 - row) : row;
         bmp.seek(pixOff + (uint32_t)srcRow * rowSize);
@@ -174,6 +179,7 @@ static bool drawBmpFromSd(const String& path, int x, int y, int maxW, int maxH) 
         }
         tft.pushImage(x, y + row, drawW, 1, lineBuf);
     }
+    tft.setSwapBytes(prevSwap);
     bmp.close();
     return true;
 }
