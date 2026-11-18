@@ -64,18 +64,6 @@ static String   transientMsg;
 static uint32_t transientUntil = 0;
 static char     sbuf[96];
 
-#ifndef BOARD_ID
-#define BOARD_ID unknown
-#endif
-#define STR_(x) #x
-#define STR(x) STR_(x)
-#define BOARD_NAME STR(BOARD_ID)
-static bool     showDiag   = false;
-static uint32_t diagNextMs = 0;
-static String   sdCardInfo = "not mounted";
-struct TouchInfo { int rawX = 0, rawY = 0, rawZ = 0, x = -1, y = -1, hit = -1; uint32_t ms = 0, count = 0; };
-static TouchInfo lastTouch;
-
 // --- Layout (computed once the panel size is known) -------------------------
 struct Layout {
     bool big;
@@ -192,8 +180,6 @@ static bool         artIsGif = false;
 static bool         artReady = false;
 static uint32_t     artNextFrameMs = 0;
 static String       artReason;
-static String       artPath;
-static uint32_t     artDecodeMs = 0, artFrames = 0;
 
 static void freeArt() {
     if (gifDec) { gifDec->close(); delete gifDec; gifDec = nullptr; }
@@ -301,7 +287,7 @@ static bool openArt(const String& path) {
     const char* exts[] = {nullptr, ".gif", ".png"};
     for (const char* e : exts) {
         String p = String("/") + (e ? stem + e : path);
-        if (loadFileToRam(p)) { artIsGif = p.endsWith(".gif"); artPath = p; return true; }
+        if (loadFileToRam(p)) { artIsGif = p.endsWith(".gif"); return true; }
     }
     return false;
 }
@@ -309,9 +295,6 @@ static bool openArt(const String& path) {
 static void startArt(const std::string& imagePath) {
     freeArt();
     artReason = "";
-    artPath = imagePath.c_str();
-    artFrames = 0;
-    uint32_t t0 = millis();
     tft.fillRect(L.artX - 3, L.artY - 3, L.artW + 6, L.artH + 6, 0x1082);
     if (imagePath.empty()) { artReason = "none"; drawArtPlaceholder(); return; }
     if (!sdMounted) { artReason = "no SD card"; drawArtPlaceholder(); return; }
@@ -338,7 +321,6 @@ static void startArt(const std::string& imagePath) {
         pngDec->close();
         artReady = true;
     }
-    artDecodeMs = millis() - t0;
 }
 
 static void tickArt() {
@@ -348,7 +330,6 @@ static void tickArt() {
     int delayMs = 0;
     int more = gifDec->playFrame(false, &delayMs);
     if (more <= 0) gifDec->reset();
-    ++artFrames;
     artNextFrameMs = millis() + (delayMs > 20 ? delayMs : 120);
 }
 
@@ -604,92 +585,6 @@ static void renderMap(const Snapshot& s) {
     tft.print("Stylised, not to scale.  Tap to close.");
 }
 
-// --- Diagnostics (tap the footer bar, or send 'd' / 'i' over serial) ----------
-struct DiagLine { String label, value; uint16_t color; };
-
-static std::vector<DiagLine> buildDiag() {
-    std::vector<DiagLine> v;
-    char b[120];
-    Snapshot s = game.snapshot();
-    v.push_back({"FW", String(__DATE__) + " " + __TIME__, TFT_WHITE});
-    snprintf(b, sizeof(b), "%s  %s @%dMHz", BOARD_NAME, ESP.getChipModel(), (int)ESP.getCpuFreqMHz());
-    v.push_back({"Board", b, TFT_WHITE});
-    snprintf(b, sizeof(b), "%dx%d  %s layout  art %dx%d", TFT_W, TFT_H, L.big ? "big" : "small", L.artW, L.artH);
-    v.push_back({"TFT", b, TFT_WHITE});
-    v.push_back({"SD", sdCardInfo + "  | " + bootMessage, sdMounted ? COL_TEAL : COL_DANGER});
-    snprintf(b, sizeof(b), "free %u  min %u  block %u", (unsigned)ESP.getFreeHeap(),
-             (unsigned)ESP.getMinFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
-    v.push_back({"Heap", b, ESP.getFreeHeap() < 40000 ? COL_WARN : TFT_WHITE});
-    snprintf(b, sizeof(b), "%lus  loop ok", (unsigned long)(millis() / 1000));
-    v.push_back({"Up", b, TFT_WHITE});
-    snprintf(b, sizeof(b), "%s  %u B  %s  %lums  fr %lu", artPath.length() ? artPath.c_str() : "-",
-             (unsigned)artLen, artIsGif ? "GIF" : "PNG", (unsigned long)artDecodeMs, (unsigned long)artFrames);
-    v.push_back({"Art", b, artReady ? TFT_WHITE : COL_WARN});
-    if (artReason.length()) v.push_back({"Art!", artReason, COL_WARN});
-    snprintf(b, sizeof(b), "IRQ=%d  n=%lu  raw %d,%d z%d", digitalRead(PIN_TOUCH_IRQ),
-             (unsigned long)lastTouch.count, lastTouch.rawX, lastTouch.rawY, lastTouch.rawZ);
-    v.push_back({"Touch", b, TFT_WHITE});
-    snprintf(b, sizeof(b), "%d,%d hit=%d  %lums ago", lastTouch.x, lastTouch.y, lastTouch.hit,
-             lastTouch.ms ? (unsigned long)(millis() - lastTouch.ms) : 0UL);
-    v.push_back({"Last", b, TFT_WHITE});
-    snprintf(b, sizeof(b), "%s  %s  day %d", s.locationName.c_str(), s.dateLabel.c_str(), s.day);
-    v.push_back({"Game", b, TFT_WHITE});
-    v.push_back({"State", game.debugState().c_str(), COL_TEAL});
-    return v;
-}
-
-static void dumpDiagSerial() {
-    Serial.println("[DIAG] ----");
-    for (const auto& l : buildDiag())
-        Serial.printf("[DIAG] %-6s %s\n", l.label.c_str(), l.value.c_str());
-}
-
-static void renderDiag() {
-    auto lines = buildDiag();
-    tft.setTextFont(L.uiFont);
-    tft.setTextSize(1);
-    int y = 0;
-    tft.fillRect(0, y, TFT_W, L.titleH, COL_BAR);
-    tft.setTextColor(TFT_WHITE);
-    tft.setTextFont(1); tft.setTextSize(2);
-    tft.setCursor(8, L.big ? 7 : 4);
-    tft.print("Diagnostics");
-    tft.setTextFont(L.uiFont); tft.setTextSize(1);
-    y = L.titleH + 2;
-    const int labelW = L.big ? 62 : 36;
-    for (const auto& l : lines) {
-        // long values wrap onto continuation rows
-        String val = l.value;
-        bool first = true;
-        while (val.length() && y + L.lh <= L.footY) {
-            int cut = val.length();
-            while (cut > 1 && tft.textWidth(val.substring(0, cut)) > TFT_W - labelW - 8) --cut;
-            tft.fillRect(0, y, TFT_W, L.lh, COL_BG);
-            if (first) { tft.setTextColor(COL_AMBER); tft.setCursor(4, y); tft.print(l.label); }
-            tft.setTextColor(l.color);
-            tft.setCursor(4 + labelW, y);
-            tft.print(val.substring(0, cut));
-            val = val.substring(cut);
-            first = false;
-            y += L.lh;
-        }
-    }
-    tft.fillRect(0, y, TFT_W, L.footY - y, COL_BG);
-    // crosshair at the last touch (recent taps in red)
-    if (lastTouch.ms && lastTouch.y >= L.titleH && lastTouch.y < L.footY) {
-        uint16_t c = millis() - lastTouch.ms < 4000 ? COL_DANGER : COL_DIM;
-        tft.drawLine(lastTouch.x - 6, lastTouch.y, lastTouch.x + 6, lastTouch.y, c);
-        tft.drawLine(lastTouch.x, lastTouch.y - 6, lastTouch.x, lastTouch.y + 6, c);
-    }
-    tft.fillRect(0, L.footY, TFT_W, L.footH, COL_BAR);
-    tft.setTextColor(TFT_WHITE);
-    tft.setCursor(4, L.footY + (L.footH - tft.fontHeight()) / 2);
-    tft.print("Tap here to close. Tap elsewhere to test touch.");
-}
-
-static void openDiag()  { freeArt(); showDiag = true;  tft.fillScreen(COL_BG); diagNextMs = 0; dumpDiagSerial(); }
-static void closeDiag() { showDiag = false; needsRender = true; }
-
 // --- Save / Load ------------------------------------------------------------
 static bool saveGame() {
     if (!sdMounted) return false;
@@ -744,20 +639,12 @@ static void pollTouch(const Snapshot& s) {
     TS_Point p = touch.getPoint();
     int x = clampInt(mapTouchX(p.x), 0, TFT_W - 1);
     int y = clampInt(mapTouchY(p.y), 0, TFT_H - 1);
+    Serial.printf("[TOUCH] raw=%d,%d -> %d,%d\n", p.x, p.y, x, y);
     lastTouchMs = millis();
-    lastTouch = {p.x, p.y, p.z, x, y, -1, millis(), lastTouch.count + 1};
-    Serial.printf("[TOUCH] raw=%d,%d z=%d -> %d,%d\n", p.x, p.y, p.z, x, y);
 
-    if (showDiag) {
-        if (y >= L.footY) closeDiag();
-        diagNextMs = 0;
-        return;
-    }
-    if (y >= L.footY && !showMap) { openDiag(); return; }
     if (showMap) { showMap = false; needsRender = true; return; }
     if (y < L.titleH) { showMap = true; renderMap(s); return; }
     int hit = buttonHit(x, y);
-    lastTouch.hit = hit;
     if (hit >= 0) { handleSelection(hit, s); return; }
     if (y >= L.panelY && y < L.panelY + L.panelH && bodyPages > 1) {
         bodyPage = (bodyPage + 1) % bodyPages;
@@ -806,21 +693,15 @@ void setup() {
     Serial.printf("[SD] Calling SD.begin(cs=%d)...\n", PIN_SD_CS);
     if (!SD.begin(PIN_SD_CS, SPI, 4000000)) {
         Serial.println("[SD] FAILED - built-in story, no art");
-        sdCardInfo = "mount failed";
         bootMessage = "No SD card - built-in story, no art";
     } else {
         Serial.println("[SD] OK");
         sdMounted = true;
-        static const char* types[] = {"none", "MMC", "SD", "SDHC", "?"};
-        uint8_t ct = SD.cardType();
-        sdCardInfo = String(types[ct > 4 ? 4 : ct]) + " " + String((unsigned long)(SD.cardSize() / (1024ULL * 1024ULL))) + " MB";
         bootMessage = "SD ready";
         loadGameContent();
     }
     game.seed(esp_random());
 
-    dumpDiagSerial();
-    Serial.println("[DIAG] serial commands: d=dump  i=toggle screen  m=map");
     Serial.printf("[GAME] route=%u stops, boot=%s, heap=%u\n",
                   (unsigned)game.route().size(), bootMessage.c_str(), (unsigned)ESP.getFreeHeap());
 
@@ -834,37 +715,15 @@ void setup() {
     needsRender = true;
 }
 
-static void handleSerial(const Snapshot& s) {
-    while (Serial.available()) {
-        char c = Serial.read();
-        if (c == 'd') dumpDiagSerial();
-        else if (c == 'i') { if (showDiag) closeDiag(); else openDiag(); }
-        else if (c == 'm' && !showDiag) { showMap = !showMap; if (showMap) renderMap(s); else needsRender = true; }
-    }
-}
-
 void loop() {
     Snapshot s = game.snapshot();
-    handleSerial(s);
-    if (showDiag) {
-        if (millis() >= diagNextMs) { renderDiag(); diagNextMs = millis() + 500; }
-    } else {
-        bool transientExpired = transientUntil > 0 && millis() > transientUntil;
-        if (!showMap && (needsRender || transientExpired)) {
-            if (transientExpired) transientUntil = 0;
-            renderSnapshot(s);
-            needsRender = false;
-        }
-        tickArt();
+    bool transientExpired = transientUntil > 0 && millis() > transientUntil;
+    if (!showMap && (needsRender || transientExpired)) {
+        if (transientExpired) transientUntil = 0;
+        renderSnapshot(s);
+        needsRender = false;
     }
     pollTouch(s);
-    static uint32_t beat = 0;
-    if (millis() - beat > 10000) {
-        beat = millis();
-        Serial.printf("[DIAG] up=%lus heap=%u min=%u mode=%d art=%s fr=%lu touches=%lu\n",
-                      (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(),
-                      (unsigned)ESP.getMinFreeHeap(), (int)s.mode, artPath.c_str(),
-                      (unsigned long)artFrames, (unsigned long)lastTouch.count);
-    }
+    tickArt();
     delay(15);
 }

@@ -131,7 +131,6 @@ public:
     const std::vector<Location>& route() const { return locations_; }
     size_t routeIndex() const { return routeIndex_; }
     bool hasFlag(const std::string& f) const;
-    std::string debugState() const;   // one-line summary for diagnostics
 
     std::string serializeSave() const;
     bool loadSaveText(const std::string& text, std::string* errorOut = nullptr);

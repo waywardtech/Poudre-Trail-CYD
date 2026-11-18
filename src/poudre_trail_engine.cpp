@@ -681,16 +681,6 @@ Snapshot GameEngine::snapshot() const {
     return s;
 }
 
-std::string GameEngine::debugState() const {
-    std::ostringstream o;
-    o << "mode=" << (int)mode_ << " stop=" << (routeIndex_ + 1) << "/" << route_.size()
-      << " day=" << day_ << " rng=" << rng_ << " seen=" << seen_.size()
-      << " pending=" << pending_.size() << " flags=";
-    bool first = true;
-    for (const auto& f : flags_) { o << (first ? "" : ",") << f; first = false; }
-    return o.str();
-}
-
 std::string GameEngine::serializeSave() const {
     std::ostringstream o;
     o << "ver=2\n";
