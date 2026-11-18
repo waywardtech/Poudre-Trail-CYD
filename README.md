@@ -136,6 +136,17 @@ pio device monitor                   # serial output at 115200
 
 Libraries (LovyanGFX, AnimatedGIF, PNGdec) are fetched automatically.
 
+### Flash a CYD plugged into another machine (Le Frite, a Pi, ...)
+
+```bash
+tools/deploy_remote.sh user@lefrite                               # ILI9341 board
+tools/deploy_remote.sh user@lefrite --env esp32-2432S028R-st7789  # USB-C board
+```
+
+Copies the project over SSH, installs PlatformIO if needed, flashes the CYD, resets it and prints
+25 s of its boot log (`--monitor SECS` to change). Options: `--port`, `--key`. Same idea as
+CYD-Diagnostic's `tools/deploy.sh`.
+
 ### Host tests (g++)
 
 ```bash
