@@ -376,9 +376,9 @@ void setup() {
     tft.fillScreen(TFT_BLACK);
     Serial.printf("[TFT] %s %dx%d\n", cyd::BOARD_NAME, TFT_W, TFT_H);
 
-    cyd::touchBegin();
-    Serial.printf("[TOUCH] cs=%d irq=%d cal x=%d..%d y=%d..%d\n",
-                  cyd::PIN_TOUCH_CS, cyd::PIN_TOUCH_IRQ,
+    bool touchOk = cyd::touchBegin();
+    Serial.printf("[TOUCH] init=%s cs=%d irq=%d cal x=%d..%d y=%d..%d\n",
+                  touchOk ? "ok" : "FAILED", cyd::PIN_TOUCH_CS, cyd::PIN_TOUCH_IRQ,
                   TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y);
 
     Serial.printf("[SD] Calling SD.begin(cs=%d)...\n", cyd::PIN_SD_CS);
@@ -445,6 +445,8 @@ void loop() {
 #ifdef CYD_TOUCH_DEBUG
     static uint32_t lastDbg = 0;
     if (millis() - lastDbg > 250) { lastDbg = millis(); cyd::touchDebugDump(); }
+    static uint32_t lastBeat = 0;
+    if (millis() - lastBeat > 1000) { lastBeat = millis(); Serial.printf("[BEAT] %lus\n", millis() / 1000); }
 #endif
     pollTouch(s);
     delay(25);
