@@ -2,12 +2,12 @@
 #pragma once
 
 static const char WORLD_LOCATIONS_CSV[] = R"WCSV(id,name,summary,milesFromStart,hasTradingPost,image,mapX,mapY
-laporte,Laporte,"Antoine Janis's store at the Cache la Poudre ford, where the Overland stage and the army's Camp Collins both stop. Everyone here is passing through someone else's country.",0,true,art/laporte.gif,38,42
-canyon_mouth,Canyon Mouth,Where the river leaves the mountains. Ute and Arapaho families have used these crossings for longer than any ledger has existed.,6,true,art/canyon_mouth.gif,14,30
-council_tree,Council Tree,An old cottonwood on a bend of the river. People have met beneath it for as long as the river has bent here.,12,false,art/council_tree.gif,46,60
-virginia_dale,Virginia Dale,"The Overland home station, run on horses, labor and nerves. Mail and rumor change hands here faster than water.",22,true,art/virginia_dale.gif,30,10
-mason_claim,Mason's Claim,"Stakes, flags and a roof frame with no roof. Everything here is a position, and every position has a price.",34,true,art/mason_claim.gif,64,50
-fort_collins,Fort Collins,"Higher ground above the flood line, where the army means to rebuild what the river took. A map is about to become a fact.",42,false,art/fort_collins.gif,84,64
+laporte,Laporte,"Antoine Janis's store at the Cache la Poudre ford, where the Overland stage and the army's Camp Collins both stop. Everyone here is passing through someone else's country.",0,true,art/laporte.gif,32,46
+canyon_mouth,Canyon Mouth,Where the river leaves the mountains. Ute and Arapaho families have used these crossings for longer than any ledger has existed.,6,true,art/canyon_mouth.gif,14,36
+council_tree,Council Tree,An old cottonwood on a bend of the river. People have met beneath it for as long as the river has bent here.,12,false,art/council_tree.gif,40,64
+virginia_dale,Virginia Dale,"The Overland home station, run on horses, labor and nerves. Mail and rumor change hands here faster than water.",22,true,art/virginia_dale.gif,52,14
+mason_claim,Mason's Claim,"Stakes, flags and a roof frame with no roof. Everything here is a position, and every position has a price.",34,true,art/mason_claim.gif,66,50
+fort_collins,Fort Collins,"Higher ground above the flood line, where the army means to rebuild what the river took. A map is about to become a fact.",42,false,art/fort_collins.gif,86,62
 )WCSV";
 static const char WORLD_EVENTS_CSV[] = R"WCSV(id,locationId,title,bodyFile,image,kind,requiresFlag,c1_label,c1_food,c1_ammo,c1_med,c1_trade,c1_horse,c1_morale,c1_health,c1_rep_janis,c1_rep_friday,c1_rep_mason,c1_setFlag,c1_result,c1_days,c2_label,c2_food,c2_ammo,c2_med,c2_trade,c2_horse,c2_morale,c2_health,c2_rep_janis,c2_rep_friday,c2_rep_mason,c2_setFlag,c2_result,c2_days,c3_label,c3_food,c3_ammo,c3_med,c3_trade,c3_horse,c3_morale,c3_health,c3_rep_janis,c3_rep_friday,c3_rep_mason,c3_setFlag,c3_result,c3_days
 janis_store,laporte,Janis at the Store,events/janis_store.txt,art/janis.png,story,,Buy flour and hear the safer road,10,0,0,-1,0,0,0,4,0,0,met_janis,"Janis chalks a line on the counter. 'The road holds above this mark. Below it, nothing holds.'",0,Ask what the valley asks of travelers,0,0,0,0,0,3,0,2,1,0,"met_janis,asked_janis","He thinks before answering. 'Ask before you take. Pay what a thing is worth, not what it costs you.'",0,Pay coin and move on,6,0,0,0,0,0,0,0,0,0,met_janis,"Janis counts it twice and doesn't look up. A fair sale, nothing more.",0

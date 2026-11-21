@@ -419,6 +419,12 @@ static void renderTitleBar(const Snapshot& s) {
     tft.setTextSize(2);
     tft.setCursor(8, L.big ? 7 : 4);
     tft.print("Poudre Trail");
+    if (!L.big) {
+        tft.setTextFont(1);
+        tft.setTextSize(1);
+        tft.setCursor(160, (L.titleH - 8) / 2);
+        tft.print(s.dateLabel.c_str());
+    }
     // Map chip (tap the title bar to open the trail map)
     int cw = L.big ? 52 : 34, ch = L.big ? 20 : 14;
     int cx = TFT_W - cw - 6, cy = (L.titleH - ch) / 2;
@@ -441,13 +447,6 @@ static void renderStatus(const Snapshot& s) {
     tft.setTextFont(L.uiFont);
     tft.setTextSize(1);
     int y = L.statusY + 3;
-    if (!L.big) {
-        tft.setTextColor(TFT_WHITE);
-        tft.setCursor(6, y);
-        snprintf(sbuf, sizeof(sbuf), "%s  Day %d  %s", s.dateLabel.c_str(), s.day, s.locationName.c_str());
-        tft.print(sbuf);
-        y += L.lh;
-    }
     tft.setCursor(6, y);
     const Resources& r = s.resources;
     printStat("Food ", r.food, 35, 18);
@@ -455,11 +454,18 @@ static void renderStatus(const Snapshot& s) {
     printStat("Med ", r.medicine, 2, 1);
     printStat("Goods ", r.tradeGoods, 2, 1);
     if (L.big) printStat("Day ", s.day, 0, 0);
+    else {                                           // location, right-aligned on the first row
+        String loc = s.locationName.c_str();
+        tft.setTextColor(COL_AMBER);
+        tft.setCursor(TFT_W - 6 - tft.textWidth(loc), y);
+        tft.print(loc);
+    }
     y += L.lh;
     tft.setCursor(6, y);
     printStat("Horses ", r.horseCondition, 40, 20);
     printStat("Morale ", r.morale, 35, 15);
     printStat("Health ", r.health, 40, 20);
+    if (!L.big) printStat("Day ", s.day, 0, 0);
     y += L.lh;
     tft.setTextColor(COL_TEAL);
     if (!L.big) {
@@ -595,7 +601,7 @@ static void renderMap(const Snapshot& s) {
     }
 
     // the river
-    static const int8_t rv[][2] = {{0,28},{12,30},{24,35},{36,42},{44,52},{54,58},{66,53},{78,60},{90,54},{100,49}};
+    static const int8_t rv[][2] = {{0,30},{14,36},{24,42},{32,46},{34,56},{40,64},{52,62},{66,50},{78,54},{90,58},{100,56}};
     for (size_t i = 0; i + 1 < sizeof(rv) / sizeof(rv[0]); ++i)
         for (int o = -1; o <= 1; ++o)
             tft.drawLine(X(rv[i][0]), Y(rv[i][1]) + o, X(rv[i+1][0]), Y(rv[i+1][1]) + o, 0x3D7F);
@@ -615,9 +621,10 @@ static void renderMap(const Snapshot& s) {
         tft.setTextColor((int)i == cur ? TFT_WHITE : c);
         String nm = route[i].name.c_str();
         int tw = tft.textWidth(nm);
-        int tx = clampInt(px - tw / 2, mx + 2, mx + mw - tw - 2);
-        int ty = py + (L.big ? 12 : 7);
-        if (ty + tft.fontHeight() > my + mh - 2) ty = py - (L.big ? 12 : 7) - tft.fontHeight();
+        bool below = px > mx + mw * 75 / 100;         // far-right stop: label underneath, clamped
+        int tx = below ? px - tw / 2 : px + (L.big ? 12 : 7);
+        int ty = below ? py + (L.big ? 12 : 8) : py - tft.fontHeight() / 2;
+        tx = clampInt(tx, mx + 2, mx + mw - tw - 2);
         tft.setCursor(tx, ty);
         tft.print(nm);
     }

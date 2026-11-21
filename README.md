@@ -1,214 +1,126 @@
-# Poudre Trail - CYD
+# Poudre Trail
 
-A narrative travel game for the **ESP32-2432S028R** ("Cheap Yellow Display", 2.8"). Set in the
-Cache la Poudre valley, Colorado, May 1864: the river is rising, the army is coming, and every map is a promise to someone. *Who draws it when the water falls?*
+An Oregon Trail-style travel game set in the Cache la Poudre valley of 1864, running on a $15 ESP32 "Cheap Yellow Display".
 
-## The story
+<table>
+  <tr>
+    <td><img src="docs/screenshots/title.png" width="320" alt="Title screen: a twilight valley under stars beside the words 'Cache la Poudre valley, May 1864', with Start Journey and Load Save buttons under a status bar of food, ammo, horses and morale"></td>
+    <td><img src="docs/screenshots/event-janis.png" width="320" alt="Event screen: a portrait of trader Antoine Janis in front of store shelves, a paragraph of story text, and three tappable choices"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/travel.png" width="320" alt="Travel menu at Laporte: a dusk scene of a log trading post (an animated GIF), with a two-by-two grid of buttons for Travel onward, Trade, Camp and Save game"></td>
+    <td><img src="docs/screenshots/event-friday.png" width="320" alt="Event screen at Council Tree: a portrait of Chief Friday under a cottonwood, story text, and three choices including Listen and slow your pace"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/event-flood.png" width="320" alt="The timed flood event, High Water: a stormy brown river carrying logs, with three choices for what to save"></td>
+    <td><img src="docs/screenshots/map.png" width="320" alt="Trail map overlay: a stylised river and mountains with the six stops from Laporte to Fort Collins, the route in amber and the party's position circled at Mason's Claim"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/ending.png" width="320" alt="Ending screen, A Map With Names: a sunrise over the new camp at Fort Collins with the epilogue text and Restart and Load Save buttons"></td>
+    <td><img src="docs/screenshots/camp.png" width="320" alt="Camp menu: night campfire scene with Rest a day, Hunt, Load saved game and Back buttons"></td>
+  </tr>
+</table>
 
-You are a household travelling from **Laporte** down the Cache la Poudre to the high ground
-that will become **Fort Collins**. Along the way you meet the people who are quietly deciding what
-this valley is going to be, and a surveyor, Peter Ames, who is about to write it down.
+*These are renders, not photos: `tools/emulator` runs the firmware's own UI code on a PC against a software screen. See [Status / known issues](#status--known-issues).*
 
-| Character | Who they are | What they want from you |
-|-----------|--------------|--------------------------|
-| **Antoine Janis** | Trader at Laporte since 1858 | Plain dealing; that you ask before you take |
-| **Chief Friday** | Arapaho leader | That you listen, and carry names accurately |
-| **Little Willow** | Arapaho guide and trader at the canyon mouth | Respect for the crossings she knows |
-| **Virginia Slade** | Keeper of the Virginia Dale home station | Useful hands; no mythmaking |
-| **Mason** | Land claimant and contractor | Your signature, and your agreement |
-| **Peter Ames** | Young army surveyor | Names for his blank map |
+You lead a household down the Cache la Poudre in May 1864, from Laporte to the high ground that will become Fort Collins. Over six stops you trade, hunt, rest, and decide how to treat the people you meet: the trader Antoine Janis, Chief Friday and the Arapaho guide Little Willow, station keeper Virginia Slade, the land claimant Mason, and an army surveyor with a blank map. Food, horses, health and morale can end the trip; three separate reputations (Janis, Friday, Mason) and a handful of flags shape which ending you get. The question underneath is who gets to draw the map when the water falls. The whole story is compiled into the firmware, so it plays with no SD card; the card adds animated art and saves.
 
-**Route:** Laporte, Canyon Mouth, Council Tree, Virginia Dale, Mason's Claim, Fort Collins.
+![Poudre Trail running on a CYD](docs/photo.jpg)
 
-**Timeline:** Day 1 is May 12, 1864. Time passes with distance, rest and some choices. Once the
-calendar reaches May 19 the river floods (a timed event that fires once, wherever you are). The
-epilogue records what history did next: the flood took Camp Collins from Laporte, the army raised
-Fort Collins on higher ground that August, and in November soldiers killed more than a hundred
-Cheyenne and Arapaho at Sand Creek.
+## What you need
 
-**Historical liberties:** this is fiction built on real places and people. Dates and events are
-compressed (the Slades left Virginia Dale before 1864; Jack Slade was hanged in March 1864), and
-the stone point is the kind of Folsom-era artifact later found in northern Colorado. Little Willow,
-Ames and Mason are invented. Chief Friday, Antoine Janis and Virginia Slade were real.
+- **An ESP32-2432S028R "Cheap Yellow Display"**, the 2.8" 320x240 touchscreen board. There are two panel variants; the build environment must match yours:
+  - micro-USB board, ILI9341 panel: `esp32-2432S028R` (default)
+  - USB-C board, ST7789 panel (colours inverted or picture shifted with the default): `esp32-2432S028R-st7789`
+- **A USB cable that carries data** (many charge-only cables do not).
+- **A microSD card** (optional). Needed for the art and for saving. The setup script's format step wipes the whole card.
+- **A computer with Python 3 and PlatformIO**: `pip install platformio`. On Linux your user needs to be in the `dialout` group to flash.
 
-## Gameplay
+A 3.5" ESP32-3248S035R environment (`esp32-3248S035R`) also exists in `platformio.ini`; see the known issues.
 
-- **Travel** costs days; each day costs food (9). Horses wear down, morale slips, and hunger hurts health.
-- **Camp** lets you *rest* (health, horses, morale) or *hunt* (3 ammo, may find game). Both cost a day.
-- **Trade** at five posts, spending trade goods. Several purchases per visit.
-- **Events**: each stop has story events (some unlock only after earlier choices), and each leg has a
-  55% chance of a random trail event (hail, a rising ford, a patrol that wants names, a fever...).
-  Every event happens at most once per run.
-- **Three reputations** (Janis, Friday, Mason) are tracked separately. Reach 5+ with both Mason and
-  Friday and you earn the *moral contradiction* flag.
-- **The map**: tap the title bar to open a stylised trail map. At Fort Collins, what you tell Ames
-  (every name and where you learned it, only a few, nothing, or Mason's line) decides the ending:
-  *A Map With Names*, *A Partial Map*, *The Blank Places*, or *Mason's Line*, with extra lines for the
-  flood, the stone point, and Virginia's letter.
-- **Result screens** show what changed (`Food +10, Trade goods -1`). Long text is paged: tap the text.
-- You can lose: food, health, horses or morale reaching 0 ends the run.
+## Build and flash
 
-## Features
+```bash
+pip install platformio
 
-- Runs with **no SD card**: the whole story is compiled in (`include/world_data.hpp`). The SD card adds art and saves, and may override the story (see below).
-- **Animated art**: GIF scenes with small animated details (smoke, river glint, leaves, flags, fire) and PNG portraits, drawn from SD.
-- Layout adapts to the panel size (320x240 or 480x320); text never clips because it wraps and pages.
-- Split reputation, dated timeline, timed + random events, camp, trading, save/load (saves flags and which events have happened).
+pio run -t upload                          # micro-USB / ILI9341 board
+pio run -e esp32-2432S028R-st7789 -t upload  # USB-C / ST7789 board
+pio device monitor                         # serial log at 115200 baud
+```
 
-## Quick Start
+If the upload hangs at "Connecting...", hold the board's BOOT button for a couple of seconds and try again.
 
-### Windows
+On boot the serial log prints the panel (`[TFT] ... 320x240`), touch setup (`[TOUCH] init=ok ...`) and SD result (`[SD] OK ...` or `[SD] FAILED - built-in story, no art`).
+
+To flash a CYD that is plugged into another machine (a Pi, a Libre Computer board, ...) over SSH:
+
+```bash
+tools/deploy_remote.sh user@host                                   # ILI9341 board
+tools/deploy_remote.sh user@host --env esp32-2432S028R-st7789      # ST7789 board
+```
+
+It copies the project, installs PlatformIO there if needed, flashes, resets the board and prints its boot log.
+
+## SD card prep
+
+Use the helper script. **The format options erase the whole card** (it asks you to type `YES` first) and create a 16 GB FAT32 partition labelled `POUDRE` plus an exFAT `STORAGE` partition for the rest.
+
+Windows, from an Administrator PowerShell in the repo root:
 
 ```powershell
-# In an Administrator PowerShell, from the repo root:
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\scripts\setup_and_flash.ps1
 ```
 
-A menu lets you run each step independently:
+Linux / macOS: `sudo ./scripts/setup_and_flash.sh`
 
-| Option | Action |
-|--------|--------|
-| 1 | Full setup — format SD + copy data + build + flash |
-| 2 | Format SD only — wipe and partition the SD card |
-| 3 | Copy data only — copy game files to an existing POUDRE volume |
-| 4 | Build + flash — compile and upload firmware (no SD needed) |
-| 5 | SD prep only — format SD + copy data (no flash) |
+Both show the same menu, so each step can be run on its own:
 
-The script auto-detects your ESP32 COM port and SD card, creates a 16 GB FAT32 `POUDRE` partition and an exFAT `STORAGE` partition on the remainder, copies all game content, then builds and flashes via PlatformIO.
+| Option | Does |
+|--------|------|
+| 1 | Format the card, copy the game files, build and flash |
+| 2 | Format the card only |
+| 3 | Copy the game files to an already-formatted `POUDRE` card |
+| 4 | Build and flash only |
+| 5 | Format and copy, no flashing |
 
-**Requirements:** Python 3, `pip install platformio` (the script falls back to `python -m platformio` if `pio` is not on PATH).
+Doing it by hand instead: format a card FAT32, copy `data/art/` to `/art/` on the card, and copy `data/locations.csv`, `data/events.csv`, `data/trades.csv` and `data/events/` to `/data/`. The card's story files replace the built-in story only if they parse; a card carrying the old events format is ignored and the built-in story is used.
 
-### Linux / macOS
+## Controls
 
-```bash
-chmod +x scripts/setup_and_flash.sh
-sudo ./scripts/setup_and_flash.sh
-```
+Everything is touch.
 
-Same five-option menu as the Windows script. Additional requirements: `dosfstools` (`sudo apt install dosfstools` / `brew install dosfstools`) and `exfatprogs` (`sudo apt install exfatprogs`) for the two-partition layout.
+- **Buttons**: tap an option. The title offers Start Journey and Load Save; at a stop the travel menu offers Travel onward, Trade / barter, Camp (rest or hunt) and Save game.
+- **Continue**: after each choice a result screen shows what changed ("Food +10, Trade goods -1"); tap Continue.
+- **Long text**: when text does not fit, the panel shows `tap text for more 1/2`; tap the text to turn the page.
+- **Trade**: buy as often as you like (each purchase costs trade goods), then Leave trading post.
+- **Camp**: Rest a day, Hunt (uses 3 ammo), Load saved game, or Back. Both Rest and Hunt cost a day of food.
+- **Map**: tap the title bar (the amber Map chip) for a stylised trail map; tap anywhere to close.
+- **Save / load**: Save game is in the travel menu and writes one slot, `/saves/slot1.sav`, on the SD card. Load Save is on the title, camp and end screens.
 
-### Manual build (no SD card needed)
+## Status / known issues
 
-```bash
-pip install platformio
-pio run              # compile
-pio run -t upload    # flash (auto-detects port)
-pio device monitor   # serial output at 115200
-```
+This is a hobby project in progress.
 
-The firmware runs a full fallback world with hard-coded content when no SD card is present.
+- **The merged build has not been run on hardware.** The pin map, touch calibration, SD bring-up and button layout come from earlier builds that were checked on a 2.8" board. The current build with the 1864 story, GIF and PNG art, camp and map compiles for all three environments and its game engine passes 65 host tests, but nobody has yet watched it run on a CYD.
+- **No real photo yet.** `docs/photo.jpg` does not exist, so the image above is a placeholder, and the screenshots are emulator renders. The emulator approximates TFT_eSPI (its real 5x7 font is used, shapes are approximate), and only draws the 2.8" layout.
+- **Art needs the SD card.** Without one you get a "No art" placeholder and cannot save. GIF animation speed, memory use and colour order are untested on the device.
+- **Touch calibration is per board.** The numbers are constants in `include/cyd_display.h`; there is no on-screen calibration screen. Taps landing offset or mirrored means editing them.
+- **ST7789 and 3.5" builds are unverified.** Both compile; neither has been confirmed on a real board here.
+- **One save slot, saved only from the travel menu**, not in the middle of an event.
+- **Short game.** 21 events across 6 stops, each event at most once per run, so replays repeat. The Linux/macOS SD script has not been tested by us on real hardware.
+- **History is compressed.** The story uses real places and people (Antoine Janis, Chief Friday, Virginia Slade) with compressed dates; Little Willow, Peter Ames and Mason are invented.
+- **Not in this build:** ideas from the `dev` branch (tone-based dialogue variants, an on-screen touch calibration flow, design docs), and any sound.
 
-## Hardware
-
-Target: **ESP32-2432S028R** ("Cheap Yellow Display", 2.8", 320x240). The pin map, bus layout, panel
-variants and touch calibration come from the CYD System Inspector project
-([waywardtech/CYD-Diagnostic](https://github.com/waywardtech/CYD-Diagnostic), `firmware/src/config.h`
-and `display.h`) and live in `include/cyd_display.h`:
-
-| Part | Bus / pins |
-|------|------------|
-| LCD | HSPI: SCLK 14, MOSI 13, MISO 12, DC 2, CS 15, backlight 21 (no reset pin) |
-| Touch (XPT2046) | its own pins, software SPI: SCLK 25, MOSI 32, MISO 39, CS 33 |
-| microSD | its own VSPI bus: SCLK 18, MISO 19, MOSI 23, CS 5 |
-| Expansion P3 | GPIO22 / GPIO27 (I2C); GPIO21 is the backlight |
-
-Two panel controllers ship under this board name, so there are two build environments:
-
-| Env | Board |
-|-----|-------|
-| `esp32-2432S028R` (default) | micro-USB board, ILI9341 panel |
-| `esp32-2432S028R-st7789` | USB-C board, ST7789 panel with inverted colour |
-
-If colours look inverted, or the picture is shifted or the wrong size, try the other env.
-If taps land offset or mirrored, adjust `TOUCH_X_MIN/MAX` and `TOUCH_Y_MIN/MAX` in `include/cyd_display.h`.
-
-## Build
+## Development
 
 ```bash
-pip install platformio
-
-pio run                              # ILI9341 board (default)
-pio run -e esp32-2432S028R-st7789    # ST7789 (USB-C) board
-pio run -t upload                    # flash
-pio device monitor                   # serial output at 115200
+make -C test run                      # 65 engine checks on the host, no hardware needed
+tools/emulator/screenshots.sh         # re-render docs/screenshots from the real UI code (run `pio run` once first; needs Pillow)
+python3 tools/embed_world.py          # after editing data/*.csv or data/events/*.txt
+python3 tools/make_art.py             # regenerate data/art (needs Pillow)
 ```
 
-Libraries (LovyanGFX, AnimatedGIF, PNGdec) are fetched automatically.
+The story is plain data: `data/locations.csv`, `data/events.csv`, `data/trades.csv` and `data/events/*.txt`. In `events.csv`, each event has `kind` (`story`, `trail` for random events between stops, or `timed:N` to fire once the day count reaches N), an optional `requiresFlag` expression (`a&!b&c|d` means a AND NOT b AND (c OR d)), and up to three choices with resource, reputation, flag and day changes. `embed_world.py` bakes them into `include/world_data.hpp` so the firmware has them without an SD card.
 
-### Flash a CYD plugged into another machine (Le Frite, a Pi, ...)
-
-```bash
-tools/deploy_remote.sh user@lefrite                               # ILI9341 board
-tools/deploy_remote.sh user@lefrite --env esp32-2432S028R-st7789  # USB-C board
-```
-
-Copies the project over SSH, installs PlatformIO if needed, flashes the CYD, resets it and prints
-25 s of its boot log (`--monitor SECS` to change). Options: `--port`, `--key`. Same idea as
-CYD-Diagnostic's `tools/deploy.sh`.
-
-### Host tests (g++)
-
-```bash
-make -C test run
-```
-
-Runs the engine tests (no Arduino toolchain needed): world loading, event queue and results,
-calendar, timed flood, save/load, camp and trade, game over, a full run to the epilogue,
-contradiction flag, finale gating, determinism.
-
-## Editing the story
-
-The story lives in plain files; no C++ changes are needed to add events.
-
-- `data/locations.csv`, `data/events.csv`, `data/trades.csv`, `data/events/<id>.txt`
-- `events.csv` columns: `id, locationId, title, bodyFile, image, kind, requiresFlag`, then three choices of
-  `label, food, ammo, med, trade, horse, morale, health, rep_janis, rep_friday, rep_mason, setFlag, result, days`
-- `kind`: `story` (fires at its location), `trail` (random, between stops) or `timed:N` (fires on arrival once day >= N)
-- `requiresFlag`: `a&!b&c|d` means a AND NOT b AND (c OR d). `setFlag` takes several flags separated by commas.
-- After editing, run `python3 tools/embed_world.py` to rebuild `include/world_data.hpp` (the built-in copy
-  of the story), then rebuild the firmware. Copying `data/` to the SD card overrides the built-in story
-  without reflashing; an SD story in the old 13-column format is ignored automatically.
-
-## Art
-
-`data/art/` holds 96x72 images: **GIF** animations for scenes with no single subject (small details
-move: smoke, river glint, leaves, flags, firelight) and **PNG** stills for portraits and objects.
-Regenerate everything with `python3 tools/make_art.py` (needs Pillow).
-Art is read from the SD card; without one the game shows a placeholder and still plays.
-
-## SD card layout
-
-Copy the contents of `data/` to the SD card (the setup scripts do this for you):
-
-```
-/art/*.gif  /art/*.png
-/data/locations.csv  /data/events.csv  /data/trades.csv
-/data/events/*.txt
-/saves/slot1.sav        <- created on first save
-```
-
-## Changelog
-
-### Story, gameplay and graphics pass
-
-- **Story**: 1864 timeline with a real calendar and a timed flood; new characters (Little Willow, Peter Ames) and the central question of who draws the map; 21 events, 12 trades, 6 stops
-- **Gameplay**: random trail events, camp (rest / hunt), multi-purchase trading, result screens with deltas, game-over on food / health / horses / morale, endings driven by flags, saved flags and seen events
-- **Map**: stylised trail map overlay (tap the title bar)
-- **Art**: PNG portraits and animated GIF scenes replace the BMPs
-- **Hardware**: display, touch and SD now use the CYD System Inspector's pin map (separate touch and SD buses), via LovyanGFX; ILI9341 and ST7789 env
-- **Text**: word-wrapped, paged body text (no clipping); long results fit
-- **Single source of truth**: the CSVs are baked into the firmware by `tools/embed_world.py`; the hard-coded duplicate world is gone
-
-### merge/reputation-e2e
-
-- Split reputation (`repJanis`, `repFriday`, `repMason`), moral contradiction flag, `travelTo()` mode guard, Virginia Dale stop, expanded Chief Friday event, TFT_eSPI port.
-
-## Hardware-only checklist (cannot be verified in CI)
-
-- [ ] Touch: tap buttons and the title bar; if taps land offset or mirrored adjust the `TOUCH_*` range in `include/cyd_display.h` (taps print `[TOUCH]` to serial)
-- [ ] GIFs animate and PNGs show correct colours (if colours are inverted or wrong, try the other panel env)
-- [ ] SD card mounts (`[SD] OK` on serial) and art appears; frame rate is smooth enough
-- [ ] Panel: serial prints `[TFT] <controller> WxH`; expect 320x240
-- [ ] Save writes to `/saves/slot1.sav` and loads after a power cycle
-- [ ] Backlight lights immediately on power-up
+Hardware layout: LCD on HSPI (SCLK 14, MOSI 13, MISO 12, DC 2, CS 15, backlight 21), touch on its own pins (25, 32, 39, CS 33, read through LovyanGFX's XPT2046 driver), microSD on its own VSPI bus (18, 19, 23, CS 5). The pin map comes from the CYD-Diagnostic project.

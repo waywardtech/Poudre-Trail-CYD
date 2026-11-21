@@ -1,7 +1,7 @@
 id,name,summary,milesFromStart,hasTradingPost,image,mapX,mapY
-laporte,Laporte,"Antoine Janis's store at the Cache la Poudre ford, where the Overland stage and the army's Camp Collins both stop. Everyone here is passing through someone else's country.",0,true,art/laporte.gif,38,42
-canyon_mouth,Canyon Mouth,Where the river leaves the mountains. Ute and Arapaho families have used these crossings for longer than any ledger has existed.,6,true,art/canyon_mouth.gif,14,30
-council_tree,Council Tree,An old cottonwood on a bend of the river. People have met beneath it for as long as the river has bent here.,12,false,art/council_tree.gif,46,60
-virginia_dale,Virginia Dale,"The Overland home station, run on horses, labor and nerves. Mail and rumor change hands here faster than water.",22,true,art/virginia_dale.gif,30,10
-mason_claim,Mason's Claim,"Stakes, flags and a roof frame with no roof. Everything here is a position, and every position has a price.",34,true,art/mason_claim.gif,64,50
-fort_collins,Fort Collins,"Higher ground above the flood line, where the army means to rebuild what the river took. A map is about to become a fact.",42,false,art/fort_collins.gif,84,64
+laporte,Laporte,"Antoine Janis's store at the Cache la Poudre ford, where the Overland stage and the army's Camp Collins both stop. Everyone here is passing through someone else's country.",0,true,art/laporte.gif,32,46
+canyon_mouth,Canyon Mouth,Where the river leaves the mountains. Ute and Arapaho families have used these crossings for longer than any ledger has existed.,6,true,art/canyon_mouth.gif,14,36
+council_tree,Council Tree,An old cottonwood on a bend of the river. People have met beneath it for as long as the river has bent here.,12,false,art/council_tree.gif,40,64
+virginia_dale,Virginia Dale,"The Overland home station, run on horses, labor and nerves. Mail and rumor change hands here faster than water.",22,true,art/virginia_dale.gif,52,14
+mason_claim,Mason's Claim,"Stakes, flags and a roof frame with no roof. Everything here is a position, and every position has a price.",34,true,art/mason_claim.gif,66,50
+fort_collins,Fort Collins,"Higher ground above the flood line, where the army means to rebuild what the river took. A map is about to become a fact.",42,false,art/fort_collins.gif,86,62

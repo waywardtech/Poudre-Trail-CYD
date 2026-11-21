@@ -23,3 +23,5 @@ test/test_engine
 
 # art generator scratch
 tools/_contact.png
+
+tools/emulator/build/
