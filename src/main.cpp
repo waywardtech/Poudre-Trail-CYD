@@ -87,29 +87,52 @@ static void setTransient(const String& msg) {
     needsRender    = true;
 }
 
-// ─── Button layout ───────────────────────────────────────────────────────────
+// ─── Layout ──────────────────────────────────────────────────────────────────
+// Fixed bands at the top, footer at the bottom, buttons stacked above the
+// footer, and the event panel takes whatever is left. Sizes are in pixels and
+// work for both 320x240 and 480x320.
+
+static constexpr int TITLE_H   = 22;
+static constexpr int STATUS_Y  = 23;
+static constexpr int STATUS_H  = 36;
+static constexpr int PANEL_Y   = 61;
+static constexpr int MARGIN    = 6;
+static constexpr int BTN_GAP   = 4;
+static constexpr int ART_W     = 96;   // art BMPs are 96x72
+static constexpr int ART_H     = 72;
+static constexpr int LINE_H    = 10;   // text size 1: 8px glyphs + 2px leading
 
 static void clearButtons() { for (auto& b : buttons) b = Button{}; }
 
-static void buildButtons(const Snapshot& s) {
+// Lays out the option buttons so they end at `bottom`; returns their top edge.
+// Four short labels (the travel menu) go in a 2x2 grid so every button stays
+// a comfortable touch target; otherwise one full-width button per row.
+static int buildButtons(const Snapshot& s, int bottom) {
     clearButtons();
     int count = (int)s.optionLabels.size();
     if (count > 4) count = 4;
-    if (count == 0) return;
-    const int TOP = TFT_H * 164 / 240;
-    const int BOT = TFT_H - 16;
-    const int GAP = 4;
-    int avail = BOT - TOP;
-    int bh    = (avail - GAP * (count - 1)) / count;
-    if (bh < 14) bh = 14;
+    if (count == 0) return bottom;
+
+    const int fullW = TFT_W - 2 * MARGIN;
+    const int halfW = (fullW - BTN_GAP) / 2;
+    bool grid = (count == 4);
+    for (int i = 0; grid && i < count; ++i)
+        if ((int)s.optionLabels[i].size() > (halfW - 16) / 6) grid = false;
+
+    const int rows = grid ? 2 : count;
+    const int bh   = rows <= 2 ? 26 : (rows == 3 ? 20 : 18);
+    const int top  = bottom - (rows * bh + (rows - 1) * BTN_GAP);
     for (int i = 0; i < count; ++i) {
-        buttons[i].x       = 6;
-        buttons[i].y       = TOP + i * (bh + GAP);
-        buttons[i].w       = TFT_W - 12;
+        const int row = grid ? i / 2 : i;
+        const int col = grid ? i % 2 : 0;
+        buttons[i].x       = MARGIN + col * (halfW + BTN_GAP);
+        buttons[i].y       = top + row * (bh + BTN_GAP);
+        buttons[i].w       = grid ? halfW : fullW;
         buttons[i].h       = bh;
         buttons[i].label   = s.optionLabels[i].c_str();
         buttons[i].enabled = true;
     }
+    return top;
 }
 
 static int buttonHit(int x, int y) {
@@ -156,7 +179,10 @@ static bool drawBmpFromSd(const String& path, int x, int y, int maxW, int maxH) 
 
     int drawW = (int)bmpW < maxW ? (int)bmpW : maxW;
     int drawH = (int)bmpH < maxH ? (int)bmpH : maxH;
-    if (drawW > 96) { bmp.close(); return false; } // guard lineBuf size
+    if (drawW > 96 || bmpW > 96) { bmp.close(); return false; } // guard buffer sizes
+    // When the box is smaller than the image, keep its centre rather than its corner.
+    const int cropX = ((int)bmpW - drawW) / 2;
+    const int cropY = ((int)bmpH - drawH) / 2;
 
     uint32_t rowSize = ((uint32_t)bmpW * 3 + 3) & ~3u;
     uint8_t  rowBuf[288];
@@ -168,11 +194,13 @@ static bool drawBmpFromSd(const String& path, int x, int y, int maxW, int maxH) 
     tft.setSwapBytes(true);
 
     for (int row = 0; row < drawH; ++row) {
-        int srcRow = flip ? (bmpH - 1 - row) : row;
+        int imgRow = cropY + row;
+        int srcRow = flip ? (bmpH - 1 - imgRow) : imgRow;
         bmp.seek(pixOff + (uint32_t)srcRow * rowSize);
         bmp.read(rowBuf, (int)bmpW * 3);
         for (int col = 0; col < drawW; ++col) {
-            uint8_t b = rowBuf[col*3+0], g = rowBuf[col*3+1], r = rowBuf[col*3+2];
+            const uint8_t* px = &rowBuf[(cropX + col) * 3];
+            uint8_t b = px[0], g = px[1], r = px[2];
             lineBuf[col] = ((uint16_t)(r & 0xF8) << 8)
                          | ((uint16_t)(g & 0xFC) << 3)
                          | (b >> 3);
@@ -186,10 +214,13 @@ static bool drawBmpFromSd(const String& path, int x, int y, int maxW, int maxH) 
 
 // ─── Rendering ───────────────────────────────────────────────────────────────
 
+// Word-wraps `text` into at most maxLines lines; if it does not fit, the last
+// line ends in "..." instead of being cut mid-word or dropped silently.
 static void drawWrapped(const String& text, int x, int y, int width, int textSize, int maxLines) {
-    int cpl = width / (6 * textSize);
-    if (cpl < 3) return;
+    const int cpl = width / (6 * textSize);
+    if (cpl < 4 || maxLines < 1) return;
     String rem = text;
+    rem.trim();
     for (int line = 0; line < maxLines && rem.length() > 0; ++line) {
         int cut = rem.length();
         if (cut > cpl) {
@@ -199,23 +230,40 @@ static void drawWrapped(const String& text, int x, int y, int width, int textSiz
         }
         String part = rem.substring(0, cut);
         part.trim();
-        tft.setCursor(x, y + line * (10 * textSize));
-        tft.print(part);
         rem = rem.substring(cut);
         rem.trim();
+        if (line == maxLines - 1 && rem.length() > 0) {
+            int keep = cpl - 3;
+            if ((int)part.length() > keep) {
+                int sp = part.lastIndexOf(' ', keep);
+                part = part.substring(0, sp > 0 ? sp : keep);
+                part.trim();
+            }
+            part += "...";
+        }
+        tft.setCursor(x, y + line * (LINE_H * textSize));
+        tft.print(part);
     }
 }
 
-static void renderArt(const Snapshot& s) {
-    const int AX = TFT_W - 100, AY = 88, AW = 92, AH = 68;
-    tft.fillRoundRect(AX-3, AY-3, AW+6, AH+6, 6, 0x1082);
-    bool ok = drawBmpFromSd(String("/") + s.imagePath.c_str(), AX, AY, AW, AH);
+static String fitLabel(const String& text, int maxChars) {
+    if ((int)text.length() <= maxChars) return text;
+    return text.substring(0, maxChars - 3) + "...";
+}
+
+// Draws the scene art in a frame of up to 96x72 at (ax, ay); maxH may shrink it.
+static void renderArt(const Snapshot& s, int ax, int ay, int maxH) {
+    const int AH = maxH < ART_H ? maxH : ART_H;
+    if (AH < 24) return;                       // too little room to be worth it
+    tft.fillRoundRect(ax - 3, ay - 3, ART_W + 6, AH + 6, 6, 0x1082);
+    bool ok = drawBmpFromSd(String("/") + s.imagePath.c_str(), ax, ay, ART_W, AH);
     if (!ok) {
-        tft.fillRect(AX, AY, AW, AH, 0x2965);
+        tft.fillRect(ax, ay, ART_W, AH, 0x2965);
         tft.setTextColor(TFT_WHITE);
         tft.setTextSize(1);
-        tft.setCursor(AX+8, AY+28); tft.print("No art:");
-        tft.setCursor(AX+8, AY+40); tft.print(artStatus.length() ? artStatus : String("unavailable"));
+        tft.setCursor(ax + 8, ay + AH / 2 - 10); tft.print("No art:");
+        tft.setCursor(ax + 8, ay + AH / 2 + 2);
+        tft.print(artStatus.length() ? artStatus : String("unavailable"));
     }
 }
 
@@ -223,73 +271,73 @@ static void renderSnapshot(const Snapshot& s) {
     tft.fillScreen(TFT_BLACK);
 
     // Title bar
-    tft.fillRect(0, 0, TFT_W, 22, 0x2965);
+    tft.fillRect(0, 0, TFT_W, TITLE_H, 0x2965);
     tft.setTextColor(TFT_WHITE);
     tft.setTextSize(2);
     tft.setCursor(8, 4);
     tft.print("Poudre Trail");
 
-    // Status bar (rows 22-58)
-    tft.fillRect(0, 23, TFT_W, 36, 0x18C3);
+    // Status bar
+    tft.fillRect(0, STATUS_Y, TFT_W, STATUS_H, 0x18C3);
     tft.setTextSize(1);
     tft.setTextColor(TFT_WHITE);
+    const int statusChars = (TFT_W - 12) / 6;
 
     snprintf(sbuf, sizeof(sbuf), "Day %d  %s", s.day, s.locationName.c_str());
-    tft.setCursor(6, 28); tft.print(sbuf);
+    tft.setCursor(6, STATUS_Y + 5); tft.print(fitLabel(sbuf, statusChars));
 
     snprintf(sbuf, sizeof(sbuf), "F%d A%d Med%d T%d H%d Mo%d He%d",
              s.resources.food, s.resources.ammunition, s.resources.medicine,
              s.resources.tradeGoods, s.resources.horseCondition,
              s.resources.morale, s.resources.health);
-    tft.setCursor(6, 38); tft.print(sbuf);
+    tft.setCursor(6, STATUS_Y + 15); tft.print(fitLabel(sbuf, statusChars));
 
     snprintf(sbuf, sizeof(sbuf), "Janis:%s  Friday:%s  Mason:%s",
              s.reputationSummaryJanis.c_str(),
              s.reputationSummaryFriday.c_str(),
              s.reputationSummaryMason.c_str());
-    tft.setCursor(6, 48); tft.print(sbuf);
+    tft.setCursor(6, STATUS_Y + 25); tft.print(fitLabel(sbuf, statusChars));
 
-    // Event / body panel
-    const int panelH = TFT_H * 98 / 240;
-    tft.fillRoundRect(6, 60, TFT_W - 12, panelH, 6, 0x18C3);
+    // Footer: one line, or two when the message would otherwise be cut off
+    String foot = (transientUntil > millis()) ? transientMsg : String(s.footer.c_str());
+    foot.trim();
+    const int footChars = (TFT_W - 8) / 6;
+    const int footLines = (int)foot.length() > footChars ? 2 : 1;
+    const int footH     = 4 + footLines * LINE_H;
+    const int footTop   = TFT_H - footH;
+    tft.fillRect(0, footTop, TFT_W, footH, 0x2965);
+    tft.setTextColor(TFT_WHITE);
+    tft.setTextSize(1);
+    drawWrapped(foot, 4, footTop + 3, TFT_W - 8, 1, footLines);
+
+    // Buttons sit just above the footer; the event panel fills the rest
+    const int btnTop   = buildButtons(s, footTop - BTN_GAP);
+    const int panelBot = btnTop - BTN_GAP;
+    tft.fillRoundRect(MARGIN, PANEL_Y, TFT_W - 2 * MARGIN, panelBot - PANEL_Y, 6, 0x18C3);
+
     tft.setTextColor(0xFD20); // amber
     tft.setTextSize(2);
-    tft.setCursor(12, 66);
-    String hl = s.headline.c_str();
-    const int hlMax = (TFT_W - 24) / 12;
-    if ((int)hl.length() > hlMax) hl = hl.substring(0, hlMax - 3) + "...";
-    tft.print(hl);
+    tft.setCursor(12, PANEL_Y + 5);
+    tft.print(fitLabel(s.headline.c_str(), (TFT_W - 24) / 12));
+
+    const int bodyY = PANEL_Y + 27;
+    const int artX  = TFT_W - MARGIN - 6 - ART_W;
+    renderArt(s, artX, bodyY, panelBot - 5 - bodyY);
 
     tft.setTextColor(TFT_WHITE);
     tft.setTextSize(1);
-    const int bodyLines = (60 + panelH - 4 - 88) / 10;
-    drawWrapped(String(s.body.c_str()), 12, 88, TFT_W - 120, 1, bodyLines);
-    renderArt(s);
+    const int bodyLines = (panelBot - 4 - bodyY + 2) / LINE_H;
+    drawWrapped(String(s.body.c_str()), 12, bodyY, artX - 8 - 12, 1, bodyLines);
 
-    // Buttons
-    buildButtons(s);
     for (const auto& b : buttons) {
         if (!b.enabled) continue;
         tft.fillRoundRect(b.x, b.y, b.w, b.h, 6, 0x2965);
         tft.drawRoundRect(b.x, b.y, b.w, b.h, 6, 0xFD20);
         tft.setTextColor(TFT_WHITE);
         tft.setTextSize(1);
-        tft.setCursor(b.x+8, b.y + b.h/2 - 4);
-        String lbl = b.label;
-        const int lblMax = (b.w - 16) / 6;
-        if ((int)lbl.length() > lblMax) lbl = lbl.substring(0, lblMax - 3) + "...";
-        tft.print(lbl);
+        tft.setCursor(b.x + 8, b.y + b.h / 2 - 4);
+        tft.print(fitLabel(b.label, (b.w - 16) / 6));
     }
-
-    // Footer bar
-    tft.fillRect(0, TFT_H - 12, TFT_W, 12, 0x2965);
-    tft.setTextColor(TFT_WHITE);
-    tft.setTextSize(1);
-    tft.setCursor(4, TFT_H - 10);
-    String foot = (transientUntil > millis()) ? transientMsg : String(s.footer.c_str());
-    const int footMax = TFT_W / 6 - 2;
-    if ((int)foot.length() > footMax) foot = foot.substring(0, footMax);
-    tft.print(foot);
 }
 
 // ─── Save / Load ─────────────────────────────────────────────────────────────
