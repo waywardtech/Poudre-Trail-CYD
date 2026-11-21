@@ -1,0 +1,13 @@
+locationId,label,foodDelta,ammoDelta,medicineDelta,tradeDelta,horseDelta,moraleDelta,healthDelta,repJanisDelta,repFridayDelta,repMasonDelta,resultText
+laporte,"Flour and bacon (+20 food, -1 trade goods)",20,0,0,-1,0,0,0,1,0,0,Janis weighs it fair.
+laporte,"Medicine (+1 medicine, -1 trade goods)",0,0,1,-1,0,0,0,1,0,0,A practical purchase for a worsening road.
+laporte,"Cartridges (+6 ammo, -1 trade goods)",0,6,0,-1,0,0,0,0,0,0,Janis counts them out twice.
+canyon_mouth,"Dried meat from Willow's family (+14 food, -1 trade goods)",14,0,0,-1,0,0,0,0,1,0,"A fair exchange, fairly made."
+canyon_mouth,"Willow-bark tea (+6 health, -1 trade goods)",0,0,0,-1,0,0,6,0,1,0,"Bitter, and it works."
+canyon_mouth,"Hobbles and rawhide rope (+8 horses, -1 trade goods)",0,0,0,-1,8,0,0,0,1,0,Good rope. Better advice came with it.
+virginia_dale,"Cartridges (+8 ammo, -1 trade goods)",0,8,0,-1,0,0,0,0,0,0,Stage traffic turns risk into a price.
+virginia_dale,"Coffee and jerky (+12 food, +1 morale, -1 trade goods)",12,0,0,-1,0,1,0,0,0,0,The station smells like a good decision.
+virginia_dale,"Fresh team for the day (+15 horses, -2 trade goods)",0,0,0,-2,15,0,0,0,0,0,Yours get a day of grass for it.
+mason_claim,"Horse feed (+10 horses, -1 trade goods)",0,0,0,-1,10,0,0,0,-1,2,Mason's men remember the bargain.
+mason_claim,"Medicine (+1 medicine, -1 trade goods)",0,0,1,-1,0,0,0,0,-1,1,Mason does not offer charity.
+mason_claim,"Surveyed flour (+16 food, -1 trade goods)",16,0,0,-1,0,0,0,0,0,2,His seal is stamped on the sack.

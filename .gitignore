@@ -19,3 +19,9 @@ build/
 # Local env/config
 .env
 *.local
+test/test_engine
+
+# art generator scratch
+tools/_contact.png
+
+tools/emulator/build/
