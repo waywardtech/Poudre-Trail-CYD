@@ -1,123 +1,129 @@
-#pragma once
-// CYD hardware definition: ESP32-2432S028R (2.8", 320x240).
+// cyd_display.h — per-board pin map, touch and SD bring-up for the CYD targets.
 //
-// Pins, bus layout, panel variants and touch calibration come from the
-// CYD System Inspector (waywardtech/CYD-Diagnostic, firmware/src/config.h and
-// display.h), the project that holds the current, tested CYD details:
-//   - LCD on HSPI:        SCLK 14, MOSI 13, MISO 12, DC 2, CS 15, backlight 21
-//   - Touch (XPT2046) on its own pins, polled in software SPI:
-//                         SCLK 25, MOSI 32, MISO 39, CS 33
-//   - microSD on VSPI:    SCLK 18, MISO 19, MOSI 23, CS 5
-//   - Expansion P3:       GPIO22 / GPIO27 (I2C); GPIO21 is the backlight
-// Two panel controllers ship under this board name: micro-USB boards are
-// ILI9341; many USB-C boards are ST7789 with inverted colour (-DCYD_PANEL_ST7789=1).
+// Select the board with a build flag (see platformio.ini):
+//   CYD_BOARD_2432S028R  2.8" ILI9341 / ST7789 320x240  (pins: waywardtech/CYD-Diagnostic)
+//   CYD_BOARD_3248S035R  3.5" ST7796 480x320
+//
+// The two boards are wired very differently:
+//   2.8"  LCD on HSPI (14/12/13), microSD on VSPI (18/19/23, CS 5),
+//         XPT2046 touch on its own pins (CLK 25, MOSI 32, MISO 39, CS 33),
+//         read through LovyanGFX's software-SPI driver exactly as
+//         CYD-Diagnostic does (src/cyd_touch_lgfx.cpp).
+//   3.5"  LCD, touch (CS 33) and microSD (CS 5) all share one bus on 14/12/13.
+//
+// Both paths return raw touch values aligned to the landscape screen axes;
+// each board has its own TOUCH_* constants that map them to pixels.
+#pragma once
 
-#include <LovyanGFX.hpp>
+#include <Arduino.h>
+#include <SPI.h>
+#include <SD.h>
 
-constexpr int PIN_TFT_SCLK = 14;
-constexpr int PIN_TFT_MOSI = 13;
-constexpr int PIN_TFT_MISO = 12;
-constexpr int PIN_TFT_DC   = 2;
-constexpr int PIN_TFT_CS   = 15;
-constexpr int PIN_TFT_BL   = 21;
+#if !defined(CYD_BOARD_2432S028R) && !defined(CYD_BOARD_3248S035R)
+#define CYD_BOARD_2432S028R 1
+#endif
+
+namespace cyd {
+
+#if defined(CYD_BOARD_2432S028R)
+// ─── ESP32-2432S028R (2.8") ──────────────────────────────────────────────────
+constexpr const char* BOARD_NAME = "ESP32-2432S028R 2.8in";
+constexpr int PIN_TFT_BL     = 21;
 
 constexpr int PIN_TOUCH_SCLK = 25;
 constexpr int PIN_TOUCH_MOSI = 32;
 constexpr int PIN_TOUCH_MISO = 39;
 constexpr int PIN_TOUCH_CS   = 33;
+constexpr int PIN_TOUCH_IRQ  = 36;
 
 constexpr int PIN_SD_SCLK = 18;
 constexpr int PIN_SD_MISO = 19;
 constexpr int PIN_SD_MOSI = 23;
 constexpr int PIN_SD_CS   = 5;
 
-// Touch calibration (clone-to-clone variance is real). Adjust if taps land
-// offset or mirrored; the Y range is deliberately inverted.
-constexpr int TOUCH_X_MIN = 300;
-constexpr int TOUCH_X_MAX = 3900;
-constexpr int TOUCH_Y_MIN = 3700;
-constexpr int TOUCH_Y_MAX = 200;
+// Raw touch extents for the landscape screen (setRotation(1)), measured on
+// the test board: screen X follows the chip's Y channel (cmd 0x91) and screen
+// Y its X channel (cmd 0xD1). Clone-to-clone variance is real; build with
+// -DCYD_TOUCH_DEBUG to print raw values if taps land off.
+constexpr int TOUCH_MIN_X = 130;
+constexpr int TOUCH_MAX_X = 3732;
+constexpr int TOUCH_MIN_Y = 279;
+constexpr int TOUCH_MAX_Y = 4035;
+constexpr bool TOUCH_FLIP_X = false;
+constexpr bool TOUCH_FLIP_Y = false;
 
-#if defined(CYD_PANEL_ST7789) && CYD_PANEL_ST7789
-using CYDPanel = lgfx::Panel_ST7789;
-constexpr bool PANEL_INVERT = true;
-constexpr const char* PANEL_NAME = "ST7789";
+// TFT_eSPI runs on HSPI (USE_HSPI_PORT); microSD gets VSPI to itself.
+inline SPIClass& sdSpi() { static SPIClass bus(VSPI); return bus; }
+
+// ── XPT2046 via LovyanGFX (src/cyd_touch_lgfx.cpp) ──
+bool lgfxTouchBegin(int sclk, int mosi, int miso, int cs);
+bool lgfxTouchRaw(int& x, int& y, int& z);
+
+inline bool touchBegin() {
+    return lgfxTouchBegin(PIN_TOUCH_SCLK, PIN_TOUCH_MOSI, PIN_TOUCH_MISO, PIN_TOUCH_CS);
+}
+
+// Returns true while pressed; x/y are raw values already oriented to the
+// landscape screen axes, mapped to pixels by TOUCH_* in main.cpp.
+inline bool touchRead(int& x, int& y) {
+    int rx, ry, z;
+    if (!lgfxTouchRaw(rx, ry, z)) return false;   // rx = 0xD1, ry = 0x91
+    x = ry;
+    y = rx;
+    return true;
+}
+
+// Diagnostic: raw readings while pressed (build with -DCYD_TOUCH_DEBUG).
+inline void touchDebugDump() {
+    int x, y, z;
+    if (lgfxTouchRaw(x, y, z)) Serial.printf("[TDBG] x=%d y=%d size=%d\n", x, y, z);
+}
+
+inline bool sdBegin() {
+    sdSpi().begin(PIN_SD_SCLK, PIN_SD_MISO, PIN_SD_MOSI, PIN_SD_CS);
+    return SD.begin(PIN_SD_CS, sdSpi(), 4000000);
+}
+
 #else
-using CYDPanel = lgfx::Panel_ILI9341;
-constexpr bool PANEL_INVERT = false;
-constexpr const char* PANEL_NAME = "ILI9341";
+// ─── ESP32-3248S035R (3.5") ──────────────────────────────────────────────────
+}  // namespace cyd
+#include <XPT2046_Touchscreen.h>
+namespace cyd {
+
+constexpr const char* BOARD_NAME = "ESP32-3248S035R 3.5in";
+constexpr int PIN_TFT_BL    = 27;
+constexpr int PIN_TOUCH_CS  = 33;
+constexpr int PIN_TOUCH_IRQ = 36;
+constexpr int PIN_SD_CS     = 5;
+
+constexpr int TOUCH_MIN_X = 240;
+constexpr int TOUCH_MAX_X = 3850;
+constexpr int TOUCH_MIN_Y = 240;
+constexpr int TOUCH_MAX_Y = 3850;
+constexpr bool TOUCH_FLIP_X = false;
+constexpr bool TOUCH_FLIP_Y = false;
+
+inline XPT2046_Touchscreen& touchDev() {
+    static XPT2046_Touchscreen t(PIN_TOUCH_CS, PIN_TOUCH_IRQ);
+    return t;
+}
+
+inline bool touchBegin() {
+    touchDev().begin();          // calls SPI.begin() with ESP32 default pins...
+    touchDev().setRotation(1);
+    SPI.begin(14, 12, 13, -1);   // ...so put the shared bus back on the CYD pins
+    delay(10);
+    return true;
+}
+
+inline bool touchRead(int& x, int& y) {
+    if (!touchDev().touched()) return false;
+    TS_Point p = touchDev().getPoint();
+    x = p.x; y = p.y;
+    return true;
+}
+
+inline bool sdBegin() { return SD.begin(PIN_SD_CS, SPI, 4000000); }
 #endif
 
-class CYDDisplay : public lgfx::LGFX_Device {
-    CYDPanel panel_;
-    lgfx::Bus_SPI bus_;
-    lgfx::Light_PWM backlight_;
-    lgfx::Touch_XPT2046 touch_;
-
-public:
-    CYDDisplay() {
-        {
-            auto cfg = bus_.config();
-            cfg.spi_host = HSPI_HOST;
-            cfg.spi_mode = 0;
-            cfg.freq_write = 40000000;
-            cfg.freq_read = 16000000;
-            cfg.spi_3wire = false;
-            cfg.use_lock = true;
-            cfg.dma_channel = SPI_DMA_CH_AUTO;
-            cfg.pin_sclk = PIN_TFT_SCLK;
-            cfg.pin_mosi = PIN_TFT_MOSI;
-            cfg.pin_miso = PIN_TFT_MISO;
-            cfg.pin_dc = PIN_TFT_DC;
-            bus_.config(cfg);
-            panel_.setBus(&bus_);
-        }
-        {
-            auto cfg = panel_.config();
-            cfg.pin_cs = PIN_TFT_CS;
-            cfg.pin_rst = -1;
-            cfg.pin_busy = -1;
-            cfg.memory_width = 240;
-            cfg.memory_height = 320;
-            cfg.panel_width = 240;
-            cfg.panel_height = 320;
-            cfg.offset_x = 0;
-            cfg.offset_y = 0;
-            cfg.offset_rotation = 2;
-            cfg.readable = true;
-            cfg.invert = PANEL_INVERT;
-            cfg.rgb_order = false;
-            cfg.dlen_16bit = false;
-            cfg.bus_shared = false;
-            panel_.config(cfg);
-        }
-        {
-            auto cfg = backlight_.config();
-            cfg.pin_bl = PIN_TFT_BL;
-            cfg.invert = false;
-            cfg.freq = 12000;
-            cfg.pwm_channel = 7;
-            backlight_.config(cfg);
-            panel_.setLight(&backlight_);
-        }
-        {
-            auto cfg = touch_.config();
-            cfg.x_min = TOUCH_X_MIN;
-            cfg.x_max = TOUCH_X_MAX;
-            cfg.y_min = TOUCH_Y_MIN;
-            cfg.y_max = TOUCH_Y_MAX;
-            cfg.pin_int = -1;
-            cfg.bus_shared = false;
-            cfg.offset_rotation = 0;
-            cfg.spi_host = -1;          // software SPI: own pins, no bus sharing
-            cfg.freq = 1000000;
-            cfg.pin_sclk = PIN_TOUCH_SCLK;
-            cfg.pin_mosi = PIN_TOUCH_MOSI;
-            cfg.pin_miso = PIN_TOUCH_MISO;
-            cfg.pin_cs = PIN_TOUCH_CS;
-            touch_.config(cfg);
-            panel_.setTouch(&touch_);
-        }
-        setPanel(&panel_);
-    }
-};
+}  // namespace cyd

@@ -1,7 +1,7 @@
 // Poudre Trail - CYD main sketch
-// Board: ESP32-2432S028R (2.8" 320x240, ILI9341 or ST7789). Pins, buses and touch
-// calibration live in include/cyd_display.h (from the CYD System Inspector project).
-// Display: LovyanGFX (HSPI)   Touch: XPT2046 on its own pins   SD: own VSPI bus
+// Boards: ESP32-2432S028R (2.8" 320x240, default) and ESP32-3248S035R (3.5" 480x320).
+// Display: TFT_eSPI.  Pins, touch (LovyanGFX XPT2046 driver on the 2.8") and SD bring-up
+// per board live in include/cyd_display.h; the 2.8" pin map is from CYD-Diagnostic.
 //
 // The whole game is compiled in (include/world_data.hpp), so it runs with no SD card.
 // Optional SD layout, which overrides the built-in content when present and valid:
@@ -15,14 +15,19 @@
 #include <SD.h>
 #include <AnimatedGIF.h>
 #include <PNGdec.h>
+#include <TFT_eSPI.h>
 #include "cyd_display.h"
 #include <vector>
 #include "poudre_trail_engine.hpp"
 
+// Touch calibration (measured per board) is in include/cyd_display.h
+using cyd::TOUCH_MIN_X; using cyd::TOUCH_MAX_X;
+using cyd::TOUCH_MIN_Y; using cyd::TOUCH_MAX_Y;
+using cyd::TOUCH_FLIP_X; using cyd::TOUCH_FLIP_Y;
+
 static constexpr const char* SAVE_PATH = "/saves/slot1.sav";
 
 // Palette (RGB565)
-static constexpr uint16_t COL_WHITE   = 0xFFFF;
 static constexpr uint16_t COL_BG      = 0x0000;
 static constexpr uint16_t COL_BAR     = 0x2965;
 static constexpr uint16_t COL_PANEL   = 0x18C3;
@@ -33,8 +38,7 @@ static constexpr uint16_t COL_DANGER  = 0xF800;
 static constexpr uint16_t COL_DIM     = 0x8410;
 
 // --- Globals ----------------------------------------------------------------
-CYDDisplay tft;
-SPIClass sdSpi(VSPI);          // the microSD slot has its own bus
+TFT_eSPI tft = TFT_eSPI();
 GameEngine game;
 
 static int  TFT_W = 320, TFT_H = 240;
@@ -57,13 +61,16 @@ struct Layout {
     int  titleH, statusY, statusH;
     int  panelY, panelH;
     int  btnTop, btnH, btnGap;
+    bool btnGrid;
+    int  footLines;
+    int  artVisH;
     int  footY, footH;
     int  artX, artY, artW, artH, artSrcW, artSrcH;
     int  hlX, hlY, hlW;
     int  bodyX, bodyY, bodyW, bodyLines;
 } L;
 
-static void computeLayout() {
+static void computeLayout() {      // size-dependent parts, once
     L.big    = TFT_W >= 400;
     L.uiFont = L.big ? 2 : 1;
     L.lh     = L.big ? 18 : 10;
@@ -72,29 +79,62 @@ static void computeLayout() {
     L.statusY = L.titleH + 1;
     L.statusH = rows * L.lh + 6;
     L.panelY  = L.statusY + L.statusH + 2;
-    L.footH   = L.big ? 20 : 12;
-    L.footY   = TFT_H - L.footH;
-    L.btnH    = L.big ? 20 : 15;
-    L.btnGap  = L.big ? 2 : 3;
-    int btnArea = 4 * L.btnH + 3 * L.btnGap;
-    L.btnTop  = L.footY - 2 - btnArea;
-    L.panelH  = L.btnTop - 3 - L.panelY;
-
+    L.btnGap  = L.big ? 3 : 4;
     L.artSrcW = 96; L.artSrcH = 72;
     L.artW = L.big ? 144 : 96;                 // big panels draw art at 3/2 scale
     L.artH = L.big ? 108 : 72;
     L.artX = TFT_W - 6 - 4 - L.artW;
-    L.artY = L.big ? L.panelY + 4 : L.panelY + 20;
-
-    L.hlX = 12; L.hlY = L.panelY + 4;
-    L.hlW = L.big ? L.artX - 8 - L.hlX : TFT_W - 24;
+    L.hlX = 12;
     L.bodyX = 12;
+}
+
+// Per-screen layout, built bottom-up: footer (1 or 2 lines), then the option
+// buttons (2x2 grid for four short labels, otherwise one per row), then the
+// event panel takes whatever height is left. The art is centre-cropped when the
+// panel is too short for all of it.
+static void layoutFor(const Snapshot& s) {
+    tft.setTextFont(L.uiFont);
+    tft.setTextSize(1);
+    String foot = (transientUntil > millis()) ? transientMsg : String(s.footer.c_str());
+    foot.trim();
+    L.footLines = tft.textWidth(foot) > TFT_W - 8 ? 2 : 1;
+    const int footLineH = L.big ? 18 : 10;
+    L.footH = 4 + L.footLines * footLineH;
+    L.footY = TFT_H - L.footH;
+
+    int count = (int)s.optionLabels.size();
+    if (count > 4) count = 4;
+    const int fullW = TFT_W - 12, halfW = (fullW - L.btnGap) / 2;
+    bool grid = count == 4;
+    for (int i = 0; grid && i < count; ++i)
+        if (tft.textWidth(String(s.optionLabels[i].c_str())) > halfW - 16) grid = false;
+    L.btnGrid = grid;
+    const int rows = grid ? 2 : count;
+    L.btnH = rows <= 2 ? (L.big ? 30 : 26) : (rows == 3 ? (L.big ? 24 : 20) : (L.big ? 22 : 18));
+    const int area = rows > 0 ? rows * L.btnH + (rows - 1) * L.btnGap : 0;
+    L.btnTop = L.footY - L.btnGap - area;
+    L.panelH = L.btnTop - L.btnGap - L.panelY;
+
+    L.hlY = L.panelY + 4;
     L.bodyY = L.panelY + (L.big ? 26 : 20);
-    L.bodyW = L.artX - 8 - L.bodyX;
+    L.artY = L.panelY + (L.big ? 4 : 20);
+    int avail = L.panelH - (L.artY - L.panelY) - 4;
+    L.artVisH = avail >= 24 ? (avail < L.artH ? avail : L.artH) : 0;
+    L.hlW = (L.big && L.artVisH) ? L.artX - 8 - L.hlX : TFT_W - 24;
+    L.bodyW = (L.artVisH ? L.artX - 8 : TFT_W - 6) - L.bodyX;
     L.bodyLines = (L.panelY + L.panelH - 3 - L.bodyY) / L.lh;
+    if (L.bodyLines < 1) L.bodyLines = 1;
 }
 
 // --- Helpers ----------------------------------------------------------------
+static int mapTouchX(int raw) {
+    return TOUCH_FLIP_X ? map(raw, TOUCH_MIN_X, TOUCH_MAX_X, TFT_W, 0)
+                        : map(raw, TOUCH_MIN_X, TOUCH_MAX_X, 0, TFT_W);
+}
+static int mapTouchY(int raw) {
+    return TOUCH_FLIP_Y ? map(raw, TOUCH_MIN_Y, TOUCH_MAX_Y, TFT_H, 0)
+                        : map(raw, TOUCH_MIN_Y, TOUCH_MAX_Y, 0, TFT_H);
+}
 static int clampInt(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
 static String readTextFile(const char* path) {
@@ -129,10 +169,13 @@ static void buildButtons(const Snapshot& s) {
     for (auto& b : buttons) b = Button{};
     int count = (int)s.optionLabels.size();
     if (count > 4) count = 4;
+    const int fullW = TFT_W - 12, halfW = (fullW - L.btnGap) / 2;
     for (int i = 0; i < count; ++i) {
-        buttons[i].x       = 6;
-        buttons[i].y       = L.btnTop + i * (L.btnH + L.btnGap);
-        buttons[i].w       = TFT_W - 12;
+        const int row = L.btnGrid ? i / 2 : i;
+        const int col = L.btnGrid ? i % 2 : 0;
+        buttons[i].x       = 6 + col * (halfW + L.btnGap);
+        buttons[i].y       = L.btnTop + row * (L.btnH + L.btnGap);
+        buttons[i].w       = L.btnGrid ? halfW : fullW;
         buttons[i].h       = L.btnH;
         buttons[i].label   = s.optionLabels[i].c_str();
         buttons[i].enabled = true;
@@ -179,9 +222,11 @@ static void pushRuns(int x, int y, int w, const uint16_t* px, const uint8_t* tra
 
 // Draw one source line (width w starting at column x0) at 1x or 3/2 scale.
 static void emitSrcLine(int srcY, int x0, int w, const uint16_t* px, const uint8_t* tr) {
-    if (srcY < 0 || srcY >= L.artSrcH || x0 + w > L.artSrcW) return;
+    if (L.artVisH <= 0 || srcY < 0 || srcY >= L.artSrcH || x0 + w > L.artSrcW) return;
+    const int crop = (L.artH - L.artVisH) / 2;       // rows hidden above and below
     if (!L.big) {
-        pushRuns(L.artX + x0, L.artY + srcY, w, px, tr);
+        int dy = srcY - crop;
+        if (dy >= 0 && dy < L.artVisH) pushRuns(L.artX + x0, L.artY + dy, w, px, tr);
         return;
     }
     static uint16_t dpx[160];
@@ -199,8 +244,10 @@ static void emitSrcLine(int srcY, int x0, int w, const uint16_t* px, const uint8
     }
     int dy0 = (srcY * 3 + 1) / 2;
     int dy1 = ((srcY + 1) * 3 + 1) / 2;        // exclusive
-    for (int dy = dy0; dy < dy1; ++dy)
-        pushRuns(L.artX + dx0, L.artY + dy, n, dpx, tr ? dtr : nullptr);
+    for (int dy = dy0; dy < dy1; ++dy) {
+        int vy = dy - crop;
+        if (vy >= 0 && vy < L.artVisH) pushRuns(L.artX + dx0, L.artY + vy, n, dpx, tr ? dtr : nullptr);
+    }
 }
 
 static void gifDraw(GIFDRAW* d) {
@@ -247,14 +294,14 @@ static bool loadFileToRam(const String& path) {
 }
 
 static void drawArtPlaceholder() {
-    tft.fillRect(L.artX, L.artY, L.artW, L.artH, COL_BAR);
-    tft.drawRect(L.artX, L.artY, L.artW, L.artH, COL_DIM);
+    tft.fillRect(L.artX, L.artY, L.artW, L.artVisH, COL_BAR);
+    tft.drawRect(L.artX, L.artY, L.artW, L.artVisH, COL_DIM);
     tft.setTextFont(L.uiFont);
     tft.setTextSize(1);
     tft.setTextColor(COL_DIM);
-    tft.setCursor(L.artX + 8, L.artY + L.artH / 2 - L.lh);
+    tft.setCursor(L.artX + 8, L.artY + L.artVisH / 2 - L.lh);
     tft.print("No art");
-    tft.setCursor(L.artX + 8, L.artY + L.artH / 2);
+    tft.setCursor(L.artX + 8, L.artY + L.artVisH / 2);
     tft.print(artReason.length() ? artReason : String("unavailable"));
 }
 
@@ -273,7 +320,8 @@ static bool openArt(const String& path) {
 static void startArt(const std::string& imagePath) {
     freeArt();
     artReason = "";
-    tft.fillRect(L.artX - 3, L.artY - 3, L.artW + 6, L.artH + 6, 0x1082);
+    if (L.artVisH <= 0) return;                // no room for art on this screen
+    tft.fillRect(L.artX - 3, L.artY - 3, L.artW + 6, L.artVisH + 6, 0x1082);
     if (imagePath.empty()) { artReason = "none"; drawArtPlaceholder(); return; }
     if (!sdMounted) { artReason = "no SD card"; drawArtPlaceholder(); return; }
     if (!openArt(String(imagePath.c_str()))) {
@@ -317,9 +365,9 @@ static int    bodyDeltaStart = -1;     // first line of the trailing "+/-" summa
 static int    bodyPage = 0, bodyPages = 1, bodyPerPage = 1;
 static String bodySig;
 
-static void wrapBody(const String& text, int maxW) {
-    bodyLinesAll.clear();
-    bodyDeltaStart = -1;
+static void wrapInto(std::vector<String>& out, const String& text, int maxW, int* deltaStart = nullptr) {
+    out.clear();
+    if (deltaStart) *deltaStart = -1;
     tft.setTextFont(L.uiFont);
     tft.setTextSize(1);
     int n = text.length(), start = 0;
@@ -327,7 +375,7 @@ static void wrapBody(const String& text, int maxW) {
     while (start <= n) {
         int nl = text.indexOf('\n', start);
         String p = nl < 0 ? text.substring(start) : text.substring(start, nl);
-        if (lastNl >= 0 && start == lastNl + 1) bodyDeltaStart = (int)bodyLinesAll.size();
+        if (deltaStart && lastNl >= 0 && start == lastNl + 1) *deltaStart = (int)out.size();
         String line;
         int pos = 0, plen = p.length();
         while (pos < plen) {
@@ -335,25 +383,30 @@ static void wrapBody(const String& text, int maxW) {
             String word = sp < 0 ? p.substring(pos) : p.substring(pos, sp);
             String cand = line.length() ? line + " " + word : word;
             if (line.length() == 0 || tft.textWidth(cand) <= maxW) line = cand;
-            else { bodyLinesAll.push_back(line); line = word; }
+            else { out.push_back(line); line = word; }
             pos = sp < 0 ? plen : sp + 1;
         }
-        if (line.length() || plen == 0) bodyLinesAll.push_back(line);
+        if (line.length() || plen == 0) out.push_back(line);
         if (nl < 0) break;
         start = nl + 1;
     }
+}
+
+static void wrapBody(const String& text, int maxW) {
+    wrapInto(bodyLinesAll, text, maxW, &bodyDeltaStart);
     int total = (int)bodyLinesAll.size();
     bodyPerPage = L.bodyLines;
     bodyPages = 1;
     if (total > bodyPerPage) {
         bodyPerPage = L.bodyLines - 1;               // last row of the panel shows the page marker
+        if (bodyPerPage < 1) bodyPerPage = 1;
         bodyPages = (total + bodyPerPage - 1) / bodyPerPage;
     }
 }
 
 // --- Rendering --------------------------------------------------------------
 static void printStat(const char* label, int value, int warnBelow, int dangerBelow) {
-    uint16_t c = value < dangerBelow ? COL_DANGER : (value < warnBelow ? COL_WARN : COL_WHITE);
+    uint16_t c = value < dangerBelow ? COL_DANGER : (value < warnBelow ? COL_WARN : TFT_WHITE);
     tft.setTextColor(c);
     snprintf(sbuf, sizeof(sbuf), "%s%d ", label, value);
     tft.print(sbuf);
@@ -361,7 +414,7 @@ static void printStat(const char* label, int value, int warnBelow, int dangerBel
 
 static void renderTitleBar(const Snapshot& s) {
     tft.fillRect(0, 0, TFT_W, L.titleH, COL_BAR);
-    tft.setTextColor(COL_WHITE);
+    tft.setTextColor(TFT_WHITE);
     tft.setTextFont(1);
     tft.setTextSize(2);
     tft.setCursor(8, L.big ? 7 : 4);
@@ -377,7 +430,7 @@ static void renderTitleBar(const Snapshot& s) {
     tft.print("Map");
     if (L.big) {
         snprintf(sbuf, sizeof(sbuf), "%s - %s", s.dateLabel.c_str(), s.locationName.c_str());
-        tft.setTextColor(COL_WHITE);
+        tft.setTextColor(TFT_WHITE);
         tft.setCursor(220, 6);
         tft.print(sbuf);
     }
@@ -389,7 +442,7 @@ static void renderStatus(const Snapshot& s) {
     tft.setTextSize(1);
     int y = L.statusY + 3;
     if (!L.big) {
-        tft.setTextColor(COL_WHITE);
+        tft.setTextColor(TFT_WHITE);
         tft.setCursor(6, y);
         snprintf(sbuf, sizeof(sbuf), "%s  Day %d  %s", s.dateLabel.c_str(), s.day, s.locationName.c_str());
         tft.print(sbuf);
@@ -452,7 +505,7 @@ static void renderPanel(const Snapshot& s) {
     int first = bodyPage * bodyPerPage;
     for (int i = 0; i < bodyPerPage && first + i < (int)bodyLinesAll.size(); ++i) {
         int idx = first + i;
-        tft.setTextColor(bodyDeltaStart >= 0 && idx >= bodyDeltaStart ? COL_TEAL : COL_WHITE);
+        tft.setTextColor(bodyDeltaStart >= 0 && idx >= bodyDeltaStart ? COL_TEAL : TFT_WHITE);
         tft.setCursor(L.bodyX, L.bodyY + i * L.lh);
         tft.print(bodyLinesAll[idx]);
     }
@@ -472,7 +525,7 @@ static void renderButtons(const Snapshot& s) {
         if (!b.enabled) continue;
         tft.fillRoundRect(b.x, b.y, b.w, b.h, 6, COL_BAR);
         tft.drawRoundRect(b.x, b.y, b.w, b.h, 6, COL_AMBER);
-        tft.setTextColor(COL_WHITE);
+        tft.setTextColor(TFT_WHITE);
         String lbl = b.label;
         int maxW = b.w - 16;
         bool cut = false;
@@ -487,14 +540,25 @@ static void renderFooter(const Snapshot& s) {
     tft.fillRect(0, L.footY, TFT_W, L.footH, COL_BAR);
     tft.setTextFont(L.uiFont);
     tft.setTextSize(1);
-    tft.setTextColor(COL_WHITE);
+    tft.setTextColor(TFT_WHITE);
     String foot = (transientUntil > millis()) ? transientMsg : String(s.footer.c_str());
-    while (foot.length() > 3 && tft.textWidth(foot) > TFT_W - 8) foot.remove(foot.length() - 1);
-    tft.setCursor(4, L.footY + (L.footH - tft.fontHeight()) / 2);
-    tft.print(foot);
+    foot.trim();
+    std::vector<String> lines;
+    wrapInto(lines, foot, TFT_W - 8);
+    const int lineH = L.big ? 18 : 10;
+    for (int i = 0; i < L.footLines && i < (int)lines.size(); ++i) {
+        String ln = lines[i];
+        if (i == L.footLines - 1 && (int)lines.size() > L.footLines) {      // did not fit: end in "..."
+            while (ln.length() > 3 && tft.textWidth(ln + "...") > TFT_W - 8) ln.remove(ln.length() - 1);
+            ln += "...";
+        }
+        tft.setCursor(4, L.footY + 3 + i * lineH);
+        tft.print(ln);
+    }
 }
 
 static void renderSnapshot(const Snapshot& s) {
+    layoutFor(s);
     tft.fillScreen(COL_BG);
     renderTitleBar(s);
     renderStatus(s);
@@ -509,7 +573,7 @@ static void renderMap(const Snapshot& s) {
     freeArt();
     tft.fillScreen(COL_BG);
     tft.fillRect(0, 0, TFT_W, L.titleH, COL_BAR);
-    tft.setTextColor(COL_WHITE);
+    tft.setTextColor(TFT_WHITE);
     tft.setTextFont(1); tft.setTextSize(2);
     tft.setCursor(8, L.big ? 7 : 4);
     tft.print("Trail Map");
@@ -518,7 +582,8 @@ static void renderMap(const Snapshot& s) {
     tft.setCursor(TFT_W - tft.textWidth(sbuf) - 8, L.big ? 6 : 8);
     tft.print(sbuf);
 
-    const int mx = 4, my = L.titleH + 3, mw = TFT_W - 8, mh = L.footY - my - 3;
+    const int footH = L.big ? 20 : 12, footY = TFT_H - footH;
+    const int mx = 4, my = L.titleH + 3, mw = TFT_W - 8, mh = footY - my - 3;
     tft.fillRoundRect(mx, my, mw, mh, 6, 0x2A02);                       // dry-grass land
     auto X = [&](int pct) { return mx + pct * mw / 100; };
     auto Y = [&](int pct) { return my + pct * mh / 100; };
@@ -546,8 +611,8 @@ static void renderMap(const Snapshot& s) {
         int px = X(route[i].mapX), py = Y(route[i].mapY);
         uint16_t c = (int)i <= cur ? COL_AMBER : COL_DIM;
         tft.fillCircle(px, py, L.big ? 5 : 3, c);
-        if ((int)i == cur) tft.drawCircle(px, py, L.big ? 9 : 6, COL_WHITE);
-        tft.setTextColor((int)i == cur ? COL_WHITE : c);
+        if ((int)i == cur) tft.drawCircle(px, py, L.big ? 9 : 6, TFT_WHITE);
+        tft.setTextColor((int)i == cur ? TFT_WHITE : c);
         String nm = route[i].name.c_str();
         int tw = tft.textWidth(nm);
         int tx = clampInt(px - tw / 2, mx + 2, mx + mw - tw - 2);
@@ -557,9 +622,9 @@ static void renderMap(const Snapshot& s) {
         tft.print(nm);
     }
 
-    tft.fillRect(0, L.footY, TFT_W, L.footH, COL_BAR);
-    tft.setTextColor(COL_WHITE);
-    tft.setCursor(4, L.footY + (L.footH - tft.fontHeight()) / 2);
+    tft.fillRect(0, footY, TFT_W, footH, COL_BAR);
+    tft.setTextColor(TFT_WHITE);
+    tft.setCursor(4, footY + (footH - tft.fontHeight()) / 2);
     tft.print("Stylised, not to scale.  Tap to close.");
 }
 
@@ -613,12 +678,12 @@ static void handleSelection(int idx, const Snapshot& s) {
 
 static void pollTouch(const Snapshot& s) {
     if (millis() - lastTouchMs < 250) return;
-    uint16_t tx = 0, ty = 0;
-    if (!tft.getTouch(&tx, &ty)) return;
-    int x = clampInt(tx, 0, TFT_W - 1);
-    int y = clampInt(ty, 0, TFT_H - 1);
-    Serial.printf("[TOUCH] %d,%d\n", x, y);
-    lastTouchMs = millis();
+    int rx, ry;
+    if (!cyd::touchRead(rx, ry)) return;
+    lastTouchMs = millis();                   // debounce every press, not only button hits
+    int x = clampInt(mapTouchX(rx), 0, TFT_W - 1);
+    int y = clampInt(mapTouchY(ry), 0, TFT_H - 1);
+    Serial.printf("[TOUCH] raw=%d,%d -> %d,%d\n", rx, ry, x, y);
 
     if (showMap) { showMap = false; needsRender = true; return; }
     if (y < L.titleH) { showMap = true; renderMap(s); return; }
@@ -651,24 +716,43 @@ static void loadGameContent() {
 // --- Setup / Loop -----------------------------------------------------------
 void setup() {
     Serial.begin(115200);
+    pinMode(cyd::PIN_TFT_BL, OUTPUT);
+    digitalWrite(cyd::PIN_TFT_BL, HIGH);
+
     tft.init();
     tft.setRotation(1);
-    tft.setBrightness(255);
+    tft.setSwapBytes(true);        // art lines are native RGB565; the panel wants big-endian
     TFT_W = tft.width();
     TFT_H = tft.height();
     computeLayout();
     tft.fillScreen(COL_BG);
-    Serial.printf("[TFT] %s %dx%d big=%d\n", PANEL_NAME, TFT_W, TFT_H, (int)L.big);
+    Serial.printf("[TFT] %s %dx%d big=%d\n", cyd::BOARD_NAME, TFT_W, TFT_H, (int)L.big);
 
-    Serial.printf("[SD] VSPI sck=%d miso=%d mosi=%d cs=%d\n", PIN_SD_SCLK, PIN_SD_MISO, PIN_SD_MOSI, PIN_SD_CS);
-    sdSpi.begin(PIN_SD_SCLK, PIN_SD_MISO, PIN_SD_MOSI, PIN_SD_CS);
-    if (!SD.begin(PIN_SD_CS, sdSpi, 10000000)) {
+    bool touchOk = cyd::touchBegin();
+    Serial.printf("[TOUCH] init=%s cs=%d irq=%d cal x=%d..%d y=%d..%d\n",
+                  touchOk ? "ok" : "FAILED", cyd::PIN_TOUCH_CS, cyd::PIN_TOUCH_IRQ,
+                  TOUCH_MIN_X, TOUCH_MAX_X, TOUCH_MIN_Y, TOUCH_MAX_Y);
+
+    Serial.printf("[SD] Calling SD.begin(cs=%d)...\n", cyd::PIN_SD_CS);
+    if (!cyd::sdBegin()) {
         Serial.println("[SD] FAILED - built-in story, no art");
         bootMessage = "No SD card - built-in story, no art";
     } else {
-        Serial.println("[SD] OK");
         sdMounted = true;
         bootMessage = "SD ready";
+        int artCount = 0;
+        if (File art = SD.open("/art")) {
+            for (File f = art.openNextFile(); f; f = art.openNextFile()) {
+                String n = f.name();
+                n.toLowerCase();
+                if (n.endsWith(".gif") || n.endsWith(".png")) ++artCount;
+                f.close();
+            }
+            art.close();
+        }
+        Serial.printf("[SD] OK type=%d size=%lluMB /art: %d gif/png files; /data/locations.csv %s\n",
+                      (int)SD.cardType(), SD.cardSize() / (1024ULL * 1024ULL), artCount,
+                      SD.exists("/data/locations.csv") ? "present" : "MISSING");
         loadGameContent();
     }
     game.seed(esp_random());
@@ -677,7 +761,7 @@ void setup() {
                   (unsigned)game.route().size(), bootMessage.c_str(), (unsigned)ESP.getFreeHeap());
 
     tft.setTextFont(1);
-    tft.setTextColor(COL_WHITE);
+    tft.setTextColor(TFT_WHITE);
     tft.setTextSize(2);
     tft.setCursor(24, TFT_H / 2 - 20); tft.print("Poudre Trail");
     tft.setTextSize(1);
@@ -696,5 +780,9 @@ void loop() {
     }
     pollTouch(s);
     tickArt();
+#ifdef CYD_TOUCH_DEBUG
+    static uint32_t lastDbg = 0;
+    if (millis() - lastDbg > 250) { lastDbg = millis(); cyd::touchDebugDump(); }
+#endif
     delay(15);
 }
