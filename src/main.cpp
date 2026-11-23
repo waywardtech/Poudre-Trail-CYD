@@ -11,6 +11,7 @@
 //   /saves/slot1.sav      save data
 
 #include <Arduino.h>
+#include <new>
 #include <SPI.h>
 #include <SD.h>
 #include <AnimatedGIF.h>
@@ -39,7 +40,10 @@ static constexpr uint16_t COL_DIM     = 0x8410;
 
 // --- Globals ----------------------------------------------------------------
 TFT_eSPI tft = TFT_eSPI();
-GameEngine game;
+// Built in setup(), not during static init: the constructor parses the whole
+// embedded story, and a failure there would abort before Serial is up.
+alignas(GameEngine) static unsigned char gameStorage[sizeof(GameEngine)];
+static GameEngine& game = *reinterpret_cast<GameEngine*>(gameStorage);
 
 static int  TFT_W = 320, TFT_H = 240;
 static bool sdMounted = false;
@@ -711,6 +715,15 @@ static void loadGameContent() {
         bootMessage = "SD ready - built-in story";
         return;
     }
+    // The parser reads columns by position, so a card from an older build
+    // (different columns) would "parse" into a broken story. Only accept files
+    // whose header rows match the current format.
+    if (!locs.startsWith("id,name,summary,milesFromStart,hasTradingPost,image,mapX,mapY") ||
+        !events.startsWith("id,locationId,title,bodyFile,image,kind,requiresFlag,")) {
+        bootMessage = "SD story is an old format - built-in story";
+        Serial.println("[SD] /data CSV headers do not match this build; using built-in story");
+        return;
+    }
     auto reader = [](const std::string& path) {
         return toStd(readTextFile((String("/data/") + path.c_str()).c_str()));
     };
@@ -723,6 +736,11 @@ static void loadGameContent() {
 // --- Setup / Loop -----------------------------------------------------------
 void setup() {
     Serial.begin(115200);
+    Serial.printf("[MEM] before engine: free=%u maxBlock=%u\n",
+                  (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+    new (gameStorage) GameEngine();
+    Serial.printf("[MEM] after engine:  free=%u maxBlock=%u\n",
+                  (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
     pinMode(cyd::PIN_TFT_BL, OUTPUT);
     digitalWrite(cyd::PIN_TFT_BL, HIGH);
 

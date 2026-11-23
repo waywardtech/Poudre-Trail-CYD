@@ -100,9 +100,10 @@ Everything is touch.
 
 ## Status / known issues
 
-This is a hobby project in progress.
+This is v1.0. A redesign with a contemporary interface and larger, animated art is planned as v2.
 
-- **The merged build has not been run on hardware.** The pin map, touch calibration, SD bring-up and button layout come from earlier builds that were checked on a 2.8" board. The current build with the 1864 story, GIF and PNG art, camp and map compiles for all three environments and its game engine passes 65 host tests, but nobody has yet watched it run on a CYD.
+- **Partly verified on hardware.** On a micro-USB ESP32-2432S028R (ILI9341) the v1.0 build boots, mounts the SD card, initialises touch, and runs the built-in 1864 story (serial log: `[TFT] ... 320x240`, `[TOUCH] init=ok`, `[SD] OK`, `[GAME] route=6 stops`). The pin map, touch calibration, art colour order and button layout were checked on the same board with earlier builds. Not yet watched on the device with this build: a full tap-through (title, events, Continue, travel menu, Camp, Map, paged text), the GIF/PNG art, and save/load.
+- **Old SD cards are ignored.** A card prepared for an earlier build (different CSV columns) is detected at boot and the built-in story is used instead; re-run the SD prep to get the art.
 - **No real photo yet.** `docs/photo.jpg` does not exist, so the image above is a placeholder, and the screenshots are emulator renders. The emulator approximates TFT_eSPI (its real 5x7 font is used, shapes are approximate), and only draws the 2.8" layout.
 - **Art needs the SD card.** Without one you get a "No art" placeholder and cannot save. GIF animation speed, memory use and colour order are untested on the device.
 - **Touch calibration is per board.** The numbers are constants in `include/cyd_display.h`; there is no on-screen calibration screen. Taps landing offset or mirrored means editing them.
