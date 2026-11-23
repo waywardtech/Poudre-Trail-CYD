@@ -734,6 +734,75 @@ static void loadGameContent() {
 }
 
 // --- Setup / Loop -----------------------------------------------------------
+#ifdef CYD_BENCH
+// Hardware measurements for the v2 design (build with -DCYD_BENCH=1).
+static void benchSprite(const char* name, int w, int h, int depth) {
+    TFT_eSprite spr(&tft);
+    spr.setColorDepth(depth);
+    uint32_t before = ESP.getFreeHeap();
+    if (!spr.createSprite(w, h)) {
+        Serial.printf("[BENCH] sprite %s %dx%d %dbpp: alloc FAILED (maxBlock=%u)\n",
+                      name, w, h, depth, (unsigned)ESP.getMaxAllocHeap());
+        return;
+    }
+    spr.fillSprite(TFT_NAVY);
+    uint32_t t0 = micros();
+    for (int i = 0; i < 5; ++i) spr.pushSprite(0, 0);
+    uint32_t us = (micros() - t0) / 5;
+    Serial.printf("[BENCH] sprite %s %dx%d %dbpp: %u bytes, push %u us (%.1f fps)\n",
+                  name, w, h, depth, (unsigned)(before - ESP.getFreeHeap()), (unsigned)us, 1e6f / us);
+    spr.deleteSprite();
+}
+
+static void runBench() {
+    Serial.printf("[BENCH] heap free=%u maxBlock=%u\n",
+                  (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+
+    uint32_t t0 = micros();
+    for (int i = 0; i < 10; ++i) tft.fillScreen(i & 1 ? TFT_BLACK : TFT_DARKGREY);
+    uint32_t us = (micros() - t0) / 10;
+    Serial.printf("[BENCH] fillScreen %dx%d: %u us (%.1f fps)\n", TFT_W, TFT_H, (unsigned)us, 1e6f / us);
+
+    static uint16_t line[320 * 16];
+    for (int i = 0; i < 320 * 16; ++i) line[i] = (uint16_t)(i * 37);
+    t0 = micros();
+    for (int rep = 0; rep < 5; ++rep)
+        for (int y = 0; y < TFT_H; y += 16) tft.pushImage(0, y, TFT_W, 16, line);
+    us = (micros() - t0) / 5;
+    Serial.printf("[BENCH] pushImage full screen in 16-row strips: %u us (%.1f fps)\n", (unsigned)us, 1e6f / us);
+
+    benchSprite("full", 320, 240, 16);
+    benchSprite("half", 320, 120, 16);
+    benchSprite("full", 320, 240, 8);
+    benchSprite("full", 320, 240, 4);
+    benchSprite("bird", 48, 32, 16);
+
+    if (sdMounted) {
+        File dir = SD.open("/art");
+        String biggest; size_t bigSize = 0;
+        for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
+            if (f.size() > bigSize) { bigSize = f.size(); biggest = f.path(); }
+            f.close();
+        }
+        dir.close();
+        static uint8_t buf[4096];
+        for (int pass = 0; pass < 2; ++pass) {
+            File f = SD.open(biggest);
+            t0 = micros();
+            size_t total = 0; int n;
+            while ((n = f.read(buf, sizeof buf)) > 0) total += n;
+            us = micros() - t0;
+            f.close();
+            Serial.printf("[BENCH] SD read %s (%u bytes) pass %d: %u us (%.0f KB/s)\n",
+                          biggest.c_str(), (unsigned)total, pass + 1, (unsigned)us,
+                          total / 1024.0f / (us / 1e6f));
+        }
+    }
+    Serial.printf("[BENCH] done, heap free=%u maxBlock=%u\n",
+                  (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+}
+#endif
+
 void setup() {
     Serial.begin(115200);
     Serial.printf("[MEM] before engine: free=%u maxBlock=%u\n",
@@ -780,6 +849,9 @@ void setup() {
                       SD.exists("/data/locations.csv") ? "present" : "MISSING");
         loadGameContent();
     }
+#ifdef CYD_BENCH
+    runBench();
+#endif
     game.seed(esp_random());
 
     Serial.printf("[GAME] route=%u stops, boot=%s, heap=%u\n",
